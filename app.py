@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 from datetime import date, datetime, timedelta, time as time_obj
 import sys, os, requests, traceback
 
@@ -502,15 +502,14 @@ try:
         get_nakshatra_from_dob, NAKSHATRA_NAMES,
         get_planet_lon, _ayanamsa_cached,
     )
-    # Clear engine-level LRU caches so the updated get_masa logic runs fresh
-    get_full_panchang.cache_clear()
+    # Clear planet + ayanamsa LRU caches on startup so stale positions don't persist
     get_planet_lon.cache_clear()
     _ayanamsa_cached.cache_clear()
     from kashmir_data import (INDIA_STATES, GOTRAS,
                                KP_DISTRICTS, KP_TOWNS, KP_VILLAGES, KP_SURNAMES,
                                ASHTA_BHAIRAVAS, LOCAL_BHAIRAVAS,
                                KUL_DEVI_BY_DISTRICT, KUL_DEVTA_BY_DISTRICT,
-                               SURNAME_GOTRA_MAP)
+                               KUL_DEVI_BY_TOWN, SURNAME_GOTRA_MAP)
     ASTRO_OK = True
     # Module-level precomputed lookups (built once, reused on every render)
     _STATES_LIST = list(INDIA_STATES.keys())
@@ -533,9 +532,10 @@ def saptarishi_samvat(d: date) -> int:
     """Saptarishi (Sapta Rishi / Laukika) Samvat = Gregorian year + 3076."""
     return d.year + 3076
 
-# Streamlit-level cache so panchang for the same date+location is computed
-# once per session (survives tab switches and widget interactions).
-@st.cache_data(ttl=600, show_spinner=False)
+# Panchang cache — tithi/nakshatra/masa/muhurta are sunrise-based and stable
+# for the day, so 10-minute cache is fine. Planet positions are computed live
+# inside get_full_panchang using utcnow() so they are always current.
+@st.cache_data(ttl=60, show_spinner=False)
 def _cached_panchang(d: date, lat: float, lon: float):
     return get_full_panchang(d, lat, lon)
 
@@ -1767,17 +1767,19 @@ with tabs[2]:
     st.markdown('<div class="styled-div"><span>SELECT YEAR RANGE FOR BIRTHDAY CALENDAR · जन्म तिथि कैलेंडर वर्ष</span></div>', unsafe_allow_html=True)
     yr_col1, yr_col2, yr_col3 = st.columns([1, 1, 2])
     with yr_col1:
+        _yr_from_list = YEAR_RANGE[_YEAR_IDX.get(today.year, 0):]
         yr_from = st.selectbox(
             "From Year · वर्ष से",
-            YEAR_RANGE,
-            index=_YEAR_IDX.get(today.year, 0),
+            _yr_from_list,
+            index=0,
             key="jt_yr_from",
         )
     with yr_col2:
+        _yr_to_list = YEAR_RANGE[_YEAR_IDX.get(today.year, 0):]
         yr_to = st.selectbox(
             "To Year · वर्ष तक",
-            YEAR_RANGE,
-            index=min(_YEAR_IDX.get(today.year, 0) + 4, 100),
+            _yr_to_list,
+            index=min(2, len(_yr_to_list) - 1),
             key="jt_yr_to",
         )
     with yr_col3:
@@ -2250,52 +2252,68 @@ with tabs[4]:
 
         lin_r1, lin_r2 = st.columns(2)
 
-        # ── Kul Devi ─────────────────────────────────────────────
+        # ── Kul Devi — town-level override takes precedence over district ────
         kd = KUL_DEVI_BY_DISTRICT.get(lin_district, {})
+        town_kul_devi = KUL_DEVI_BY_TOWN.get(lin_town, "") or KUL_DEVI_BY_TOWN.get(lin_village, "")
+
         with lin_r1:
-            towns_html = ""
-            if kd.get('towns'):
-                towns_html = (
-                    '<div class="lin-desc" style="margin-top:4px">'
-                    '<span style="font-family:Cinzel,serif;font-size:8px;'
-                    'letter-spacing:1px;color:var(--saffron)">TOWNS · नगर &nbsp;</span>'
-                    + ", ".join(kd['towns'][:6])
-                    + ('…' if len(kd['towns']) > 6 else '')
-                    + '</div>'
-                )
-            also_html = ""
-            if kd.get('also'):
-                also_items = "".join(
-                    f'<div style="padding:3px 0;border-bottom:1px solid rgba(184,134,42,.1);'
-                    f'font-size:12px;color:var(--muted)"> {a}</div>'
-                    for a in kd['also']
-                )
-                also_html = (
-                    f'<div style="margin-top:8px">'
-                    f'<div style="font-family:Cinzel,serif;font-size:8px;letter-spacing:1px;'
-                    f'color:var(--walnut-mid);margin-bottom:4px">OTHER POSSIBLE KUL DEVIS</div>'
-                    f'{also_items}</div>'
-                )
-            st.markdown(f"""
-            <div class="lin-item" style="flex-direction:column;align-items:flex-start">
-              <div style="display:flex;gap:10px;align-items:flex-start;width:100%">
-                <div class="lin-icon"></div>
-                <div style="flex:1">
-                  <div class="lin-lbl">KUL DEVĪ · कुल देवी</div>
-                  <div class="lin-val">{kd.get('primary', 'Sharika Devi / Ragnya Devi')}</div>
-                  <div class="lin-desc" style="color:var(--teal);margin-top:2px">
-                     {kd.get('temple', '—')}</div>
-                  <div class="lin-desc" style="font-size:11px;margin-top:3px;
-                       background:var(--cream2);padding:5px 8px;border-radius:6px;
-                       border-left:2px solid var(--saffron)">
-                    {kd.get('location', '')}</div>
-                  <div class="lin-desc" style="margin-top:4px">{kd.get('notes', '')}</div>
-                  {towns_html}
-                  {also_html}
+            if town_kul_devi:
+                # Town-specific — show clean, precise info
+                also_html = ""
+                if kd.get('also'):
+                    also_items = "".join(
+                        f'<div style="padding:3px 0;border-bottom:1px solid rgba(184,134,42,.1);'
+                        f'font-size:11px;color:var(--muted)">{a}</div>'
+                        for a in kd['also']
+                    )
+                    also_html = (
+                        f'<div style="margin-top:8px">'
+                        f'<div style="font-family:Cinzel,serif;font-size:8px;letter-spacing:1px;'
+                        f'color:var(--walnut-mid);margin-bottom:4px">OTHER POSSIBLE KUL DEVIS</div>'
+                        f'{also_items}</div>'
+                    )
+                st.markdown(f"""
+                <div class="lin-item">
+                  <div class="lin-icon"></div>
+                  <div>
+                    <div class="lin-lbl">KUL DEVĪ · कुल देवी</div>
+                    <div class="lin-val">{town_kul_devi}</div>
+                    <div class="lin-desc" style="color:var(--saffron);font-size:11px;margin-top:2px">
+                      {lin_town} · {lin_district}</div>
+                    <div class="lin-desc" style="color:var(--teal);margin-top:3px">
+                       {kd.get('temple', '—')}</div>
+                    {also_html}
+                  </div>
                 </div>
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+            else:
+                # District-level fallback — show primary + temple + notes only
+                also_html = ""
+                if kd.get('also'):
+                    also_items = "".join(
+                        f'<div style="padding:3px 0;border-bottom:1px solid rgba(184,134,42,.1);'
+                        f'font-size:11px;color:var(--muted)">{a}</div>'
+                        for a in kd['also']
+                    )
+                    also_html = (
+                        f'<div style="margin-top:8px">'
+                        f'<div style="font-family:Cinzel,serif;font-size:8px;letter-spacing:1px;'
+                        f'color:var(--walnut-mid);margin-bottom:4px">OTHER POSSIBLE KUL DEVIS</div>'
+                        f'{also_items}</div>'
+                    )
+                st.markdown(f"""
+                <div class="lin-item">
+                  <div class="lin-icon"></div>
+                  <div>
+                    <div class="lin-lbl">KUL DEVĪ · कुल देवी</div>
+                    <div class="lin-val">{kd.get('primary', 'Sharika Devi / Ragnya Devi')}</div>
+                    <div class="lin-desc" style="color:var(--teal);margin-top:2px">
+                       {kd.get('temple', '—')}</div>
+                    <div class="lin-desc" style="margin-top:4px">{kd.get('notes', '')}</div>
+                    {also_html}
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
 
         # ── Kul Devta ────────────────────────────────────────────
         kt = KUL_DEVTA_BY_DISTRICT.get(lin_district, {})
@@ -2796,6 +2814,71 @@ with tabs[5]:
                 "archive": "",
             },
         ],
+        "Kashmiri Saints — Extended · अन्य संत": [
+            {
+                "title": "Swami Lakshman Joo · स्वामी लक्ष्मण जू (1907–1991)",
+                "author": "Swami Lakshman Joo (born Laxman Raina)",
+                "period": "1907–1991 CE — Srinagar",
+                "desc": "The last great master of the living Kashmir Shaivism tradition. Born in Srinagar into a KP family, he received shaktipat initiation at age 8 by Swami Mahatabakak Ji. Spent his entire life in Srinagar — first at Ishber (Nishat) garden, later at his Ishwara Ashram. Taught the Shiva Sutras, Vijnana Bhairava, Spanda Karikas to generations of students including western scholars. His works: Kashmir Shaivism: The Secret Supreme, Shiva Sutras commentary, Vijnana Bhairava commentary, Bhagavad Gita in light of Kashmir Shaivism. Transmitted the complete Trika-Pratyabhijña oral lineage. Regarded as a Siddha (perfected master) who embodied the recognition (pratyabhijña) he taught.",
+                "tradition": "Kashmir Shaivism / Pratyabhijña / Living tradition",
+                "link": "https://en.wikipedia.org/wiki/Lakshman_Joo",
+                "archive": "https://archive.org/search?query=lakshman+joo+kashmir+shaivism",
+            },
+            {
+                "title": "Abhinavagupta · अभिनवगुप्त (c. 975–1025 CE)",
+                "author": "Abhinavagupta (born in Srinagar)",
+                "period": "c. 975–1025 CE — Srinagar, Kashmir",
+                "desc": "The greatest philosopher-saint of Kashmir Shaivism — and arguably the greatest Tantric philosopher in history. Born into a Brahmin family in Srinagar. Studied under 15+ teachers including Shambhunatha (Kula), Lakshmanagupta (Pratyabhijña), Bhutiraja (Trika). His works span philosophy, mysticism, aesthetics, and poetics. Key works: Tantraloka (37 chapters), Tantrasara, Abhinavabharati, Paramarthasara, Paratrishika Vivarana, and commentaries on the Pratyabhijña Karikas. Composed the Bhairavastava (Hymn to Bhairava) as his final act before entering the Bhairava cave at Bheravaguhya with 1200 disciples — and never returning. A Siddha of the highest order.",
+                "tradition": "Trika / Pratyabhijña / Kula / Spanda",
+                "link": "https://en.wikipedia.org/wiki/Abhinavagupta",
+                "archive": "https://archive.org/search?query=abhinavagupta+kashmir+shaivism",
+            },
+            {
+                "title": "Vasugupta · वसुगुप्त (c. 800–850 CE)",
+                "author": "Vasugupta",
+                "period": "c. 800–850 CE — Kashmir",
+                "desc": "The first great systematiser of Kashmir Shaivism. Received the Shiva Sutras in a vision on Mahadeva (Shankaracharya) Hill, Srinagar — either carved on a rock or revealed in a dream. Also authored the Spanda Karikas (or inspired them — attributed to his disciple Kallata). Teacher of Kallata. His two texts — Shiva Sutras and Spanda Karikas — founded the entire Kashmir Shaivism tradition.",
+                "tradition": "Pratyabhijña / Spanda",
+                "link": "https://en.wikipedia.org/wiki/Vasugupta",
+                "archive": "https://archive.org/search?query=vasugupta+shiva+sutras+kashmir",
+            },
+            {
+                "title": "Utpaladeva · उत्पलदेव (c. 875–925 CE)",
+                "author": "Utpaladeva",
+                "period": "c. 875–925 CE — Kashmir",
+                "desc": "Disciple of Somananda and teacher of Lakshmanagupta (who taught Abhinavagupta). The most philosophically rigorous thinker of the Pratyabhijña school. Works: Ishvarapratyabhijña Karikas (the masterwork), Shivadrishti Vritti (commentary on Somananda), Ajadapramatarasiddhi, Shivastotravali (20 devotional hymns). Established recognition (pratyabhijña) as the path to liberation — deeper and more thorough than both Buddhist and Advaita Vedanta schools.",
+                "tradition": "Pratyabhijña",
+                "link": "https://en.wikipedia.org/wiki/Utpaladeva",
+                "archive": "https://archive.org/search?query=utpaladeva+pratyabhijna",
+            },
+            {
+                "title": "Kshemaraja · क्षेमराज (c. 1000–1050 CE)",
+                "author": "Kshemaraja (direct disciple of Abhinavagupta)",
+                "period": "c. 1000–1050 CE — Kashmir",
+                "desc": "Abhinavagupta's most prominent disciple. His works are the most widely read today: Pratyabhijnahridayam (20 sutras — gateway text), Shiva Sutra Vimarsini, Spanda Nirnaya, Svacchanda Tantra Uddyota, Netra Tantra Uddyota. Made the abstruse philosophy of his guru accessible to general students. His Pratyabhijnahridayam is still used as the first text taught in Kashmir Shaivism study.",
+                "tradition": "Pratyabhijña / Trika",
+                "link": "https://en.wikipedia.org/wiki/Kshemaraja",
+                "archive": "https://archive.org/search?query=kshemaraja+pratyabhijna",
+            },
+            {
+                "title": "Somananda · सोमानन्द (c. 850–925 CE)",
+                "author": "Somananda",
+                "period": "c. 850–925 CE — Kashmir",
+                "desc": "Founder of the Pratyabhijña philosophical school and teacher of Utpaladeva. Author of the Shivadrishti — the first systematic philosophical treatise of Kashmir Shaivism establishing that all experience is Shiva's own vision (drishti). A direct disciple of Vasugupta (through Kallata). His work forms the philosophical foundation on which Utpaladeva and Abhinavagupta built.",
+                "tradition": "Pratyabhijña",
+                "link": "https://en.wikipedia.org/wiki/Somananda",
+                "archive": "https://archive.org/search?query=somananda+shivadrishti",
+            },
+            {
+                "title": "Kallata · कल्लट (c. 850–900 CE)",
+                "author": "Kallata",
+                "period": "c. 850–900 CE — Kashmir",
+                "desc": "Direct disciple of Vasugupta. Either authored or systematised the Spanda Karikas. His Vritti (brief commentary on Spanda Karikas) is the earliest commentary on that text. Teacher of the Spanda school — his student lineage later merged with Somananda's Pratyabhijña lineage through Abhinavagupta.",
+                "tradition": "Spanda",
+                "link": "https://en.wikipedia.org/wiki/Spanda_karikas",
+                "archive": "https://archive.org/search?query=kallata+spanda+karikas",
+            },
+        ],
         "Lal Ded & Kashmiri Poetry · ललद्यद और काव्य": [
             {
                 "title": "Lal Vākhs · लल वाख — Verses of Lalleshwari",
@@ -2927,6 +3010,71 @@ with tabs[5]:
                 "tradition": "Kashmir Shaivism / Trika / Pratyabhijña — modern transmission",
                 "link": "https://en.wikipedia.org/wiki/Swami_Lakshmanjoo",
                 "archive": "https://archive.org/search?query=swami+lakshmanjoo+kashmir+shaivism",
+            },
+        ],
+        "Kashmiri Poets & Writers · काव्य एवं साहित्य": [
+            {
+                "title": "Mahmud Gami · महमूद गामी (c. 1765–1855 CE)",
+                "author": "Mahmud Gami (Mahmud of Gam village)",
+                "period": "c. 1765–1855 CE",
+                "desc": "The greatest classical poet of Kashmiri language — equivalent to Shakespeare in his mastery of Kashmiri poetic forms. A Muslim by faith but deeply steeped in Sanskrit and Kashmiri Hindu literary traditions. His Yusuf-Zulaykha (retelling of the Joseph story) is considered the finest long poem in Kashmiri. Also wrote versions of Shirin-Farhad and Banu-Nala. His poetry demonstrates the remarkable Hindu-Muslim literary synthesis of Kashmir's golden age. Editions: Sahitya Akademi publications.",
+                "tradition": "Classical Kashmiri literature",
+                "link": "https://en.wikipedia.org/wiki/Mahmud_Gami",
+                "archive": "https://archive.org/search?query=mahmud+gami+kashmiri+poetry",
+            },
+            {
+                "title": "Zinda Kaul (Masterji) · ज़िन्दा कौल (1884–1965 CE)",
+                "author": "Zinda Kaul (pen name: Masterji)",
+                "period": "1884–1965 CE — Srinagar",
+                "desc": "The foremost modern KP poet in the Kashmiri language. A schoolteacher (hence Masterji) who revived and modernised Kashmiri poetry in the 20th century. His collection 'Sumran' (Remembrance) is a landmark of modern Kashmiri literature. Recipient of the Sahitya Akademi Award (1956) — first Kashmiri writer to receive it. Deeply influenced by Lal Ded's Vakh tradition and Sufi poetry.",
+                "tradition": "Modern Kashmiri literature",
+                "link": "https://en.wikipedia.org/wiki/Zinda_Kaul",
+                "archive": "https://archive.org/search?query=zinda+kaul+kashmiri+poetry",
+            },
+            {
+                "title": "Ghulam Ahmad Mahjoor · ग़ुलाम अहमद महजूर (1887–1952 CE)",
+                "author": "Ghulam Ahmad Mahjoor",
+                "period": "1887–1952 CE",
+                "desc": "Called the 'Wordsworth of Kashmir' — the poet who brought the natural beauty of the Valley into Kashmiri verse. His poetry of the mountains, rivers, and seasons of Kashmir is beloved by all Kashmiris. Influenced by both Lal Ded and Persian/Sufi poetry. His collection 'Mahjoor' is a standard Kashmiri text. Works alongside Zinda Kaul to represent the two poles of modern Kashmiri literary tradition.",
+                "tradition": "Modern Kashmiri literature",
+                "link": "https://en.wikipedia.org/wiki/Mahjoor",
+                "archive": "https://archive.org/search?query=mahjoor+kashmiri+poet",
+            },
+            {
+                "title": "Kalhana · कल्हण (c. 1100–1150 CE)",
+                "author": "Kalhana (son of Champaka, minister of King Harsha)",
+                "period": "c. 1148–1150 CE",
+                "desc": "Author of the Rajatarangini — Kashmir's great Sanskrit chronicle. A KP Brahmin scholar who was the first Indian historian to write a systematic historical work with critical analysis of sources. His opening statement: 'The praise-worthy poet is one who, free from passion, describes the past events like a judge.' Unique in Indian literary history for its historical consciousness. His family background: father was minister under King Harsha of Kashmir.",
+                "tradition": "Sanskrit literature / History",
+                "link": "https://en.wikipedia.org/wiki/Kalhana",
+                "archive": "https://archive.org/search?query=kalhana+rajatarangini",
+            },
+            {
+                "title": "Bilhana · बिल्हण (c. 1050–1100 CE)",
+                "author": "Bilhana of Kashmir",
+                "period": "c. 1050–1100 CE",
+                "desc": "Kashmiri Sanskrit poet who left Kashmir and became court poet of King Vikramaditya VI of the Chalukya dynasty in Kalyana (Karnataka). Author of the Vikramankadevacharita (biography of his patron) and the Chaurapanchasika — 50 erotic-mystical verses about a forbidden love. The Chaurapanchasika is among the most translated Sanskrit poems; it influenced Persian and Mughal miniature painting traditions.",
+                "tradition": "Sanskrit literature / Kashmir school",
+                "link": "https://en.wikipedia.org/wiki/Bilhana",
+                "archive": "https://archive.org/search?query=bilhana+chaurapanchasika+kashmir",
+            },
+            {
+                "title": "Ksemendra · क्षेमेन्द्र (c. 990–1065 CE)",
+                "author": "Ksemendra of Kashmir",
+                "period": "c. 990–1065 CE",
+                "desc": "The most prolific Kashmiri Sanskrit author — a student of Abhinavagupta. Wrote in almost every Sanskrit literary genre: satire (Desopadesa, Kalavilasa), condensed epics (Ramayana-Manjari, Mahabharata-Manjari, Brihatkatha-Manjari), political science (Niti-Kalpataru), and poetics (Kavikanthabharan). His satires on corrupt society — doctors, merchants, women — are razor-sharp and still remarkably modern.",
+                "tradition": "Sanskrit literature / Kashmir school",
+                "link": "https://en.wikipedia.org/wiki/Ksemendra",
+                "archive": "https://archive.org/search?query=ksemendra+kashmir+sanskrit",
+            },
+            {
+                "title": "Somadeva · सोमदेव (c. 1063–1081 CE)",
+                "author": "Somadeva Bhatta",
+                "period": "c. 1063–1081 CE",
+                "desc": "Author of the Kathasaritsagara — 'The Ocean of the Streams of Story' — a massive collection of 18 books and 124 chapters containing 350+ stories derived from Gunadhya's Brihatkatha. The greatest story collection in Sanskrit. Composed for Queen Suryamati of Kashmir. Contains fairy tales, frame stories, philosophical parables, and erotica — the source of many stories in Arabian Nights and European folk literature.",
+                "tradition": "Sanskrit literature / Kashmir",
+                "link": "https://en.wikipedia.org/wiki/Somadeva",
+                "archive": "https://archive.org/search?query=somadeva+kathasaritsagara",
             },
         ],
         "Kashmiri Culture & Customs · संस्कृति": [
@@ -3090,12 +3238,12 @@ with tabs[5]:
                 "archive": "https://archive.org/search?query=kashmiri+language+sharada+script+manuscripts",
             },
         ],
-        "Āgama & Foundational Tantras · आगम": [
+        "Āgama & Root Tantras · आगम तन्त्र": [
             {
                 "title": "Mālinīvijayottara Tantra · मालिनीविजयोत्तर तन्त्र",
                 "author": "Revealed text (Āgama)",
                 "period": "Pre-10th century CE",
-                "desc": "One of the three root Trika texts. Describes the 36 tattvas, three Upayas (means to liberation), and the Trika cosmology of Shiva–Shakti–Nara. Abhinavagupta treats it as the supreme Agama.",
+                "desc": "Supreme root Trika Agama. Describes the 36 tattvas, three Upayas (Shambhava, Shakta, Anava), and Trika cosmology of Shiva–Shakti–Nara. Abhinavagupta treats it as the highest Agama and bases the Tantraloka on it. Contains the Trika goddess triad (Para, Parapara, Apara).",
                 "tradition": "Trika",
                 "link": "https://www.wisdomlib.org/definition/malini-vijayottara-tantra",
                 "archive": "https://archive.org/search?query=malinivijayottara+tantra",
@@ -3104,7 +3252,7 @@ with tabs[5]:
                 "title": "Siddhayogeśvarīmata · सिद्धयोगेश्वरीमत",
                 "author": "Revealed text (Āgama)",
                 "period": "Pre-10th century CE",
-                "desc": "Second root Trika text. Centers on the goddess Siddhayogesvari and the yogini-based tantric practice. Important source for Kula and Trika synthesis.",
+                "desc": "Second root Trika Agama. Centers on Siddhayogesvari and the 64 yoginis. Key source for Kula-Trika synthesis, yogini worship, and the transmission of Kula doctrine through Shambhunatha's lineage.",
                 "tradition": "Trika",
                 "link": "https://www.wisdomlib.org/definition/siddhayogesvarimata",
                 "archive": "",
@@ -3113,36 +3261,90 @@ with tabs[5]:
                 "title": "Vijñānabhairava Tantra · विज्ञानभैरव तन्त्र",
                 "author": "Revealed text (Āgama)",
                 "period": "Pre-9th century CE",
-                "desc": "112 dharanas (meditation techniques) for directly experiencing Bhairava-consciousness. One of the most practical and celebrated texts of Kashmir Shaivism. Translated by Paul Reps as 'Centering'.",
+                "desc": "112 dharanas (meditation techniques) for directly experiencing Bhairava-consciousness — through breath, sound, space, darkness, dissolution of thought. The most practical tantric text of Kashmir Shaivism. Translated by Paul Reps ('Centering'), Jaideva Singh, and Osho. Still used in daily sadhana.",
                 "tradition": "Trika / Shaiva Agama",
                 "link": "https://www.wisdomlib.org/hinduism/book/vijnana-bhairava-or-divine-consciousness",
                 "archive": "https://archive.org/search?query=vijnana+bhairava+tantra",
             },
             {
+                "title": "Svacchanda Tantra · स्वच्छन्द तन्त्र",
+                "author": "Revealed text (Āgama)",
+                "period": "Pre-9th century CE",
+                "desc": "18 chapters on Svacchanda Bhairava — the 'self-willed' form of Shiva. Contains the most detailed Kashmiri Shaiva cosmology, initiatory rituals (diksha), mantras, yoga, and the description of the various Shaiva initiates. Kshemaraja's Uddyota commentary is the standard reading.",
+                "tradition": "Shaiva Agama",
+                "link": "https://www.wisdomlib.org/definition/svacchanda-tantra",
+                "archive": "https://archive.org/search?query=svacchanda+tantra",
+            },
+            {
                 "title": "Netra Tantra · नेत्र तन्त्र",
                 "author": "Revealed text (Āgama)",
                 "period": "Pre-10th century CE",
-                "desc": "The 'Eye' tantra — focuses on Amriteshvara (the deathless lord). Contains important material on royal protection rituals, mantras, and the Mrityunjaya tradition in Kashmir.",
+                "desc": "The 'Eye' (Netra) tantra — focused on Amriteshvara (the lord of immortality). 22 chapters covering Mrityunjaya mantra, royal protection (raksha) rituals, yoga of the eye of Shiva, and the tantric path to immortality. Important source for Kashmiri royal ritual.",
                 "tradition": "Shaiva Agama",
                 "link": "https://www.wisdomlib.org/definition/netra-tantra",
                 "archive": "https://archive.org/search?query=netra+tantra+kashmir",
             },
             {
-                "title": "Svacchanda Tantra · स्वच्छन्द तन्त्र",
+                "title": "Paratrishikā · परात्रिंशिका",
                 "author": "Revealed text (Āgama)",
-                "period": "Pre-9th century CE",
-                "desc": "Major Shaiva Agama on Svacchanda Bhairava. Contains extensive material on mantra, cosmology, initiation (diksha) and yogic practices. Kshemaraja's commentary is authoritative.",
-                "tradition": "Shaiva Agama",
-                "link": "https://www.wisdomlib.org/definition/svacchanda-tantra",
-                "archive": "https://archive.org/search?query=svacchanda+tantra",
+                "period": "Pre-10th century CE",
+                "desc": "36 verses on Para — the supreme Shakti of Trika. Deals with the nature of mantra, the phonematic cosmology (Matrika — 50 Sanskrit letters as the body of the goddess), and supreme non-dual consciousness. Abhinavagupta's Vivarana commentary is longer than the root text.",
+                "tradition": "Trika / Kula",
+                "link": "https://www.wisdomlib.org/definition/paratrishika",
+                "archive": "https://archive.org/search?query=paratrishika+vivarana",
+            },
+            {
+                "title": "Mṛgendra Āgama · मृगेन्द्र आगम",
+                "author": "Revealed text (Shaiva Siddhanta Agama)",
+                "period": "Pre-10th century CE",
+                "desc": "One of the 28 Shaiva Siddhanta Agamas — the Mrigendra deals with cosmology, Shaiva yoga, initiation, and the four padas (charya, kriya, yoga, jnana). Important for understanding the Agamic basis that Kashmiri Shaivism critiques and transcends.",
+                "tradition": "Shaiva Siddhanta / Agama",
+                "link": "https://www.wisdomlib.org/definition/mrigendra-agama",
+                "archive": "https://archive.org/search?query=mrigendra+agama+shaiva",
+            },
+            {
+                "title": "Tantrasadbhāva · तन्त्रसद्भाव",
+                "author": "Revealed text (Āgama)",
+                "period": "Pre-10th century CE",
+                "desc": "Important Trika-Kula Agama that forms a bridge between the Trika and Krama traditions. Contains detailed descriptions of the Kula goddesses, their mandalas, and the Kaula practices. Frequently quoted by Abhinavagupta in the Tantraloka.",
+                "tradition": "Trika / Kula",
+                "link": "https://www.wisdomlib.org/definition/tantrasadbhava",
+                "archive": "https://archive.org/search?query=tantrasadbhava+kashmir",
+            },
+            {
+                "title": "Jayadrathayāmala Tantra · जयद्रथयामल तन्त्र",
+                "author": "Revealed text (Āgama)",
+                "period": "Pre-10th century CE",
+                "desc": "One of the largest Shakta-Shaiva Agamas — four 'Satkas' (sections of 6000 verses each). The fourth Satka is the Tantric source for the Kali traditions absorbed into Kashmir Shaivism. Contains detailed descriptions of the Krama goddess cycles and the 64-Bhairava traditions. Extensively cited by Abhinavagupta.",
+                "tradition": "Shakta-Shaiva / Krama",
+                "link": "https://www.wisdomlib.org/definition/jayadrathayamala",
+                "archive": "https://archive.org/search?query=jayadrathayamala+tantra",
+            },
+            {
+                "title": "Trika Hṛdaya · त्रिक हृदय",
+                "author": "Attributed to Abhinavagupta / Traditional",
+                "period": "c. 10th–11th century CE",
+                "desc": "Short manual on the Trika system — the 'Heart of Trika'. Describes the essential practices of the three-goddess Trika: Para (supreme), Parapara (middling), and Apara (lower) — worshipped as the trident (trishula) of Shiva. Used as a daily practice guide in the tradition.",
+                "tradition": "Trika",
+                "link": "https://www.wisdomlib.org/definition/trika",
+                "archive": "https://archive.org/search?query=trika+hridaya+kashmir",
+            },
+            {
+                "title": "Kulachudāmani Tantra · कुलचूडामणि तन्त्र",
+                "author": "Revealed text (Kula Āgama)",
+                "period": "c. 9th–10th century CE",
+                "desc": "Short but important Kula Agama dealing with the 'Crest-jewel of the Kula' — the supreme Kula doctrine of non-dual Shakta practice. Contains the essence of Kaula initiation and the nature of the Kula tradition as a lineage (santana) of masters and disciples.",
+                "tradition": "Kula / Kaula",
+                "link": "https://www.wisdomlib.org/definition/kulachudamani",
+                "archive": "https://archive.org/search?query=kulachudamani+tantra",
             },
         ],
-        "Pratyabhijñā Darśana · प्रत्यभिज्ञा": [
+        "Śiva Sūtras & Spanda · शिव सूत्र एवं स्पन्द": [
             {
                 "title": "Śiva Sūtras · शिव सूत्र",
                 "author": "Vasugupta (c. 875 CE)",
                 "period": "c. 875 CE",
-                "desc": "77 aphorisms revealed to Vasugupta on Mahadeva (Shankaracharya) Hill, Srinagar. Divided into three sections: Shambhavopaya, Shaktopaya, Anavopaya — the three means of liberation. Foundation of all later Kashmir Shaivism.",
+                "desc": "77 aphorisms in three sections — Shambhavopaya (7 sutras: divine means), Shaktopaya (10 sutras: energetic means), Anavopaya (45 sutras: individual means). Revealed to Vasugupta on Mahadeva (Shankaracharya) Hill, Srinagar. Foundation of the entire Kashmir Shaivism tradition. Commentaries by Kshemaraja (Vimarsini), Bhaskara, and Varadaraja.",
                 "tradition": "Pratyabhijña / Trika",
                 "link": "https://www.wisdomlib.org/hinduism/book/the-shiva-sutras",
                 "archive": "https://archive.org/search?query=shiva+sutras+vasugupta",
@@ -3151,16 +3353,63 @@ with tabs[5]:
                 "title": "Spanda Kārikā · स्पन्द कारिका",
                 "author": "Vasugupta / Kallata (c. 875–900 CE)",
                 "period": "c. 875–900 CE",
-                "desc": "52 karikas on Spanda — the divine vibration or throb of consciousness that is the nature of Shiva. Companion text to Shiva Sutras. Commentary by Kshemaraja (Spanda Nirnaya) is the standard reading.",
+                "desc": "52 karikas in 4 sections (nihnhava, sahaja vidya, vibhuti, etc.) on Spanda — the divine pulsation or vibration that is Shiva's own nature. The Spanda doctrine holds that consciousness is not static but dynamic — eternally vibrating. Commentaries: Kallata's Vritti, Kshemaraja's Spanda Nirnaya (authoritative).",
                 "tradition": "Spanda",
                 "link": "https://www.wisdomlib.org/hinduism/book/spanda-karikas",
                 "archive": "https://archive.org/search?query=spanda+karikas",
             },
             {
-                "title": "Īśvarapratyabhijñā Kārikā · ईश्वरप्रत्यभिज्ञा",
+                "title": "Spanda Nirṇaya · स्पन्द निर्णय",
+                "author": "Kshemaraja (c. 1000–1050 CE)",
+                "period": "c. 1025 CE",
+                "desc": "The most authoritative commentary on Spanda Karikas. Establishes Spanda as the dynamic creative power of Shiva-consciousness — vibration that simultaneously recognises itself as pure awareness. More philosophical and comprehensive than Kallata's Vritti.",
+                "tradition": "Spanda",
+                "link": "https://www.wisdomlib.org/definition/spandanirnaya",
+                "archive": "https://archive.org/search?query=spanda+nirnaya+kshemaraja",
+            },
+            {
+                "title": "Spanda Vivṛti (Kallata's Vritti) · स्पन्द विवृति",
+                "author": "Kallata (c. 875–900 CE)",
+                "period": "c. 900 CE",
+                "desc": "The earliest commentary on the Spanda Karikas by Kallata, Vasugupta's direct disciple. More concise than Kshemaraja's Nirnaya — often read as a first commentary. Establishes the Spanda school as an independent darshana within Kashmir Shaivism.",
+                "tradition": "Spanda",
+                "link": "https://www.wisdomlib.org/definition/spanda-karikas",
+                "archive": "https://archive.org/search?query=spanda+vritti+kallata",
+            },
+            {
+                "title": "Śiva Sūtra Vimarśinī · शिव सूत्र विमर्शिनी",
+                "author": "Kshemaraja (c. 1025 CE)",
+                "period": "c. 1025 CE",
+                "desc": "The standard commentary on all 77 Shiva Sutras. Illuminates each sutra with Trika philosophy — explaining the three upayas, the nature of Shiva-consciousness, and practical guidance for sadhana. The most widely studied commentary in the living tradition.",
+                "tradition": "Pratyabhijña",
+                "link": "https://www.wisdomlib.org/hinduism/book/shiva-sutra-vimarsini",
+                "archive": "https://archive.org/search?query=shiva+sutra+vimarsini",
+            },
+            {
+                "title": "Śiva Sūtra Vārttika · शिव सूत्र वार्त्तिक",
+                "author": "Bhaskara (c. 10th–11th century CE)",
+                "period": "c. 1000 CE",
+                "desc": "Another important commentary on the Shiva Sutras by Bhaskara — represents a slightly different interpretive lineage from Kshemaraja. Valuable for understanding the diversity within the Pratyabhijña tradition.",
+                "tradition": "Pratyabhijña",
+                "link": "https://www.wisdomlib.org/hinduism/book/the-shiva-sutras",
+                "archive": "https://archive.org/search?query=shiva+sutra+vartika+bhaskara",
+            },
+            {
+                "title": "Stava Cintāmaṇi · स्तव चिन्तामणि",
+                "author": "Bhattatrayambaka (c. 10th century CE)",
+                "period": "c. 10th century CE",
+                "desc": "A celebrated hymn to Shiva in the Spanda tradition — 'The Wish-Fulfilling Jewel of Praise'. Uses Spanda philosophy to express intense devotion. Studied alongside the Shivastotra texts.",
+                "tradition": "Spanda / Bhakti",
+                "link": "https://www.wisdomlib.org/definition/stavacintamani",
+                "archive": "",
+            },
+        ],
+        "Pratyabhijñā Darśana · प्रत्यभिज्ञा दर्शन": [
+            {
+                "title": "Īśvarapratyabhijñā Kārikā · ईश्वरप्रत्यभिज्ञा कारिका",
                 "author": "Utpaladeva (c. 900–950 CE)",
                 "period": "c. 925 CE",
-                "desc": "The philosophical masterwork of Utpaladeva — 'Recognition of the Lord as one's own Self'. Argues that liberation is the recognition (pratyabhijña) of one's identity with Shiva through knowledge and action. Foundation of the Pratyabhijña school.",
+                "desc": "The philosophical masterwork of Utpaladeva — 4 Adhikaras (chapters) on Jnana (knowledge), Kriya (action), Agama (tradition), and Tattva (reality). Argues that liberation is the spontaneous recognition (pratyabhijña) of one's identity as Shiva. Critiques Buddhist Vijnana-vada and establishes Shaiva idealism. Basis of Abhinavagupta's Vimarshini and Vivrittivimarshini commentaries.",
                 "tradition": "Pratyabhijña",
                 "link": "https://www.wisdomlib.org/definition/ishvarapratyabhijna",
                 "archive": "https://archive.org/search?query=ishvara+pratyabhijna+karikas",
@@ -3169,18 +3418,54 @@ with tabs[5]:
                 "title": "Pratyabhijñāhṛdayam · प्रत्यभिज्ञाहृदयम्",
                 "author": "Kshemaraja (c. 1000–1050 CE)",
                 "period": "c. 1025 CE",
-                "desc": "20 sutras condensing the entire Pratyabhijña philosophy for seekers. 'The Heart of Recognition' — perhaps the most accessible entry point to Kashmir Shaivism. Sutra 1: 'Chiti shakti of her own free will is the cause of the siddhi of the universe.'",
+                "desc": "20 sutras — the most accessible gateway to Kashmir Shaivism. Sutra 1: 'Chiti Shakti of her own free will is the cause of the siddhi of the universe.' Condenses the entire Pratyabhijña system for the sincere seeker. Translated by Jaideva Singh, Swami Lakshman Joo, and others. Still used in daily study and teaching worldwide.",
                 "tradition": "Pratyabhijña",
                 "link": "https://www.wisdomlib.org/hinduism/book/pratyabhijnahrdayam",
                 "archive": "https://archive.org/search?query=pratyabhijnahridayam+kshemaraja",
             },
+            {
+                "title": "Īśvarapratyabhijñā Vimarśinī · ईश्वरप्रत्यभिज्ञा विमर्शिनी",
+                "author": "Abhinavagupta (c. 1000 CE)",
+                "period": "c. 1000 CE",
+                "desc": "Abhinavagupta's concise commentary on Utpaladeva's karikas. Clarifies the central arguments and introduces his own Trika framework. Companion to the longer Vivrittivimarshini — together they form the most authoritative reading of the Pratyabhijña karikas.",
+                "tradition": "Pratyabhijña",
+                "link": "https://www.wisdomlib.org/definition/ishvarapratyabhijna",
+                "archive": "https://archive.org/search?query=ishvarapratyabhijna+vimarsini",
+            },
+            {
+                "title": "Īśvarapratyabhijñā Vivṛttivimarśinī · विवृत्तिविमर्शिनी",
+                "author": "Abhinavagupta (c. 1000 CE)",
+                "period": "c. 1000 CE",
+                "desc": "The longer, more detailed commentary on the Pratyabhijña karikas — Abhinavagupta's magnum opus in philosophical prose. Engages with Buddhist (Dignaga, Dharmakirti) and Shaiva Siddhanta views in detail. One of the most philosophically profound texts in Indian philosophy.",
+                "tradition": "Pratyabhijña",
+                "link": "https://www.wisdomlib.org/definition/ishvarapratyabhijna",
+                "archive": "https://archive.org/search?query=vivrittivimarshini+abhinavagupta",
+            },
+            {
+                "title": "Ajadapramatarasiddhi · अजडप्रमातृसिद्धि",
+                "author": "Utpaladeva (c. 925 CE)",
+                "period": "c. 925 CE",
+                "desc": "Short philosophical treatise proving the existence of the sentient knower (ajada pramata = non-inert recogniser = Shiva). Refutes Buddhist no-self theories. One of Utpaladeva's minor but important works alongside the Karikas.",
+                "tradition": "Pratyabhijña",
+                "link": "https://www.wisdomlib.org/definition/utpaladeva",
+                "archive": "https://archive.org/search?query=utpaladeva+pratyabhijna+works",
+            },
+            {
+                "title": "Shivadrishti · शिवदृष्टि",
+                "author": "Somananda (c. 875–925 CE)",
+                "period": "c. 900 CE",
+                "desc": "The founding text of the Pratyabhijña school — Somananda was Utpaladeva's teacher and the first to articulate the recognition (pratyabhijña) doctrine systematically. 9 chapters establishing that all existence is Shiva's own vision (Shiva-drishti). Critiques Advaita Vedanta, Buddhism, and Shaiva Siddhanta.",
+                "tradition": "Pratyabhijña",
+                "link": "https://www.wisdomlib.org/definition/shivadrishti",
+                "archive": "https://archive.org/search?query=shivadrishti+somananda",
+            },
         ],
-        "Abhinavagupta's Works · अभिनवगुप्त": [
+        "Abhinavagupta · अभिनवगुप्त": [
             {
                 "title": "Tantrāloka · तन्त्रालोक",
                 "author": "Abhinavagupta (c. 975–1025 CE)",
                 "period": "c. 1000 CE",
-                "desc": "The greatest encyclopaedia of Tantric Shaivism — 37 Ahnikas (chapters), ~5800 verses. Covers all Trika, Kula, Kaula and Spanda doctrines. Teachers: Shambhunatha (Kula), Lakshmanagupta (Pratyabhijña). Called 'the Tantric Mahabharata'.",
+                "desc": "The greatest encyclopaedia of Tantric Shaivism — 37 Ahnikas (chapters), ~5800 verses. Systematically covers: Anuttara (the Absolute), the 3 Upayas, cosmology, Kula doctrines, initiation (diksha), yogic practices, Krama goddess worship, mantra, and liberation. Teachers: Shambhunatha (Kula), Lakshmanagupta (Pratyabhijña). Called 'the Tantric Mahabharata'.",
                 "tradition": "Trika / Kula / Kaula",
                 "link": "https://www.wisdomlib.org/hinduism/book/tantraloka",
                 "archive": "https://archive.org/search?query=tantraloka+abhinavagupta",
@@ -3189,94 +3474,303 @@ with tabs[5]:
                 "title": "Tantrasāra · तन्त्रसार",
                 "author": "Abhinavagupta (c. 1000 CE)",
                 "period": "c. 1000 CE",
-                "desc": "Prose summary of the Tantraloka in accessible form. Covers the same themes — 36 tattvas, means of liberation, mantra, yantra — in condensed form for students.",
+                "desc": "Prose condensation of the Tantraloka — written for students who cannot study the full text. Covers the 36 tattvas, three Upayas, nature of consciousness, mantra, yantra, and the path to liberation. The most accessible of Abhinavagupta's major works.",
                 "tradition": "Trika",
                 "link": "https://www.wisdomlib.org/definition/tantrasara",
                 "archive": "https://archive.org/search?query=tantrasara+abhinavagupta",
             },
             {
-                "title": "Abhinavabhāratī · अभिनवभारती",
-                "author": "Abhinavagupta (c. 1000 CE)",
+                "title": "Paramārthasāra · परमार्थसार",
+                "author": "Abhinavagupta (adaptation of Adhara Shastra)",
                 "period": "c. 1000 CE",
-                "desc": "Abhinavagupta's massive commentary on Bharata's Natyashastra. Introduces the Rasa theory with philosophical depth — Rasa as aesthetic experience = a form of Brahmananda (bliss of Brahman). Foundational for Indian aesthetics.",
-                "tradition": "Aesthetics / Rasashastra",
-                "link": "https://www.wisdomlib.org/definition/abhinavabharati",
-                "archive": "https://archive.org/search?query=abhinavabharati+natyashastra",
+                "desc": "105 verses (adapted from the Adhara Shastra of Shesha Muni) summarising the entire Shaiva cosmology and soteriology — the 36 tattvas, the nature of bondage and liberation, grace, and the recognition of Shiva as one's own Self. One of the best introductions to Kashmir Shaivism in verse.",
+                "tradition": "Trika",
+                "link": "https://www.wisdomlib.org/definition/paramarthasara",
+                "archive": "https://archive.org/search?query=paramarthasara+abhinavagupta",
             },
             {
                 "title": "Parātriṃśikā Vivaraṇa · परात्रिंशिका विवरण",
                 "author": "Abhinavagupta (c. 1000 CE)",
                 "period": "c. 1000 CE",
-                "desc": "Commentary on the 36-verse Paratrishika tantra on the Trika Goddess Para. Contains Abhinavagupta's most esoteric teachings on mantra, the phonematic cosmology (Matrika), and the supreme Shakti.",
+                "desc": "Detailed commentary on the 36-verse Paratrishika — Abhinavagupta's most esoteric work. Contains the complete phonematic cosmology (Matrika — 50 Sanskrit letters as the body of the Goddess), the nature of the supreme mantra AHAM, and the Kula transmission. Translated by Paul Eduardo Muller-Ortega.",
                 "tradition": "Trika / Kula",
                 "link": "https://www.wisdomlib.org/definition/paratrishika",
                 "archive": "https://archive.org/search?query=paratrishika+vivarana",
             },
             {
-                "title": "Paramārthasāra · परमार्थसार",
-                "author": "Abhinavagupta (adaptation of Adhara Shastra)",
+                "title": "Abhinavabhāratī · अभिनवभारती",
+                "author": "Abhinavagupta (c. 1000 CE)",
                 "period": "c. 1000 CE",
-                "desc": "105 verses summarising the entire Shaiva philosophy — cosmology, the 36 tattvas, bondage, liberation and grace — in an accessible devotional form.",
+                "desc": "Massive commentary on Bharata's Natyashastra (treatise on performance arts). Introduces the Rasa theory with Shaiva philosophical depth — aesthetic experience (rasa) is identified with Brahmananda (the bliss of Brahman). Foundation of all subsequent Indian aesthetics (Alankara Shastra). The Rasa of Shanta (tranquility) as the supreme rasa.",
+                "tradition": "Aesthetics / Rasashastra",
+                "link": "https://www.wisdomlib.org/definition/abhinavabharati",
+                "archive": "https://archive.org/search?query=abhinavabharati+natyashastra",
+            },
+            {
+                "title": "Bodhapañcadaśikā · बोधपञ्चदशिका",
+                "author": "Abhinavagupta (c. 1000 CE)",
+                "period": "c. 1000 CE",
+                "desc": "15 verses on Bodha (pure awareness as Shiva). A concise but profound text laying out the core Trika view — that the entire universe is an expression of Shiva's own self-luminous awareness. Used as a teaching text in the tradition.",
                 "tradition": "Trika",
-                "link": "https://www.wisdomlib.org/definition/paramarthasara",
-                "archive": "https://archive.org/search?query=paramarthasara+abhinavagupta",
+                "link": "https://www.wisdomlib.org/definition/abhinavagupta",
+                "archive": "https://archive.org/search?query=bodhapanchadasika+abhinavagupta",
+            },
+            {
+                "title": "Mālinīślokavārttika · मालिनीश्लोकवार्त्तिक",
+                "author": "Abhinavagupta (c. 1000 CE)",
+                "period": "c. 1000 CE",
+                "desc": "Commentary on verses of the Malinivijayottara Tantra. Presents Abhinavagupta's reading of the root Trika Agama — explaining the Anuttara (the Absolute) and the three Shaktis (Para, Parapara, Apara) of the Trika.",
+                "tradition": "Trika",
+                "link": "https://www.wisdomlib.org/definition/abhinavagupta",
+                "archive": "https://archive.org/search?query=malinislokavartika+abhinavagupta",
+            },
+            {
+                "title": "Kramastotra · क्रमस्तोत्र",
+                "author": "Attributed to Siddhanatha / traditional Krama masters",
+                "period": "c. 9th–10th century CE",
+                "desc": "Hymns of the Krama tradition to Kali in her sequential (krama) aspect — past, present, future as three forms of the goddess Mahakali. The Krama system is the tantric antecedent of Kashmir Shaivism, focused on the dynamic sequence of consciousness rather than its static recognition. Incorporated by Abhinavagupta into the Tantraloka.",
+                "tradition": "Krama",
+                "link": "https://www.wisdomlib.org/definition/krama",
+                "archive": "https://archive.org/search?query=krama+tradition+kashmir",
+            },
+            {
+                "title": "Bhogarahasyam · भोगरहस्यम्",
+                "author": "Traditional Kaula / Kula",
+                "period": "Medieval",
+                "desc": "A text on the 'secret of enjoyment' in the Kaula tradition — the doctrine that liberation is achieved through the transformation of ordinary experience (bhoga = enjoyment) into the recognition of Shiva. Central to the Kaula teaching that the body and world are not obstacles but instruments of liberation.",
+                "tradition": "Kula / Kaula",
+                "link": "https://www.wisdomlib.org/definition/kaula",
+                "archive": "",
+            },
+            {
+                "title": "Tantraloka Viveka · तन्त्रालोक विवेक",
+                "author": "Jayaratha (c. 1150–1200 CE)",
+                "period": "c. 1200 CE",
+                "desc": "The indispensable commentary on Abhinavagupta's Tantraloka by Jayaratha — without which the Tantraloka is virtually unreadable. Explains thousands of technical terms, identifies source texts quoted, and clarifies the ritual and philosophical meaning of every verse. The KSTS (Kashmir Series of Texts and Studies) published both texts together in 12 volumes.",
+                "tradition": "Trika",
+                "link": "https://www.wisdomlib.org/hinduism/book/tantraloka",
+                "archive": "https://archive.org/search?query=tantraloka+jayaratha+viveka",
             },
         ],
-        "Kshemaraja's Works · क्षेमराज": [
-            {
-                "title": "Spanda Nirṇaya · स्पन्द निर्णय",
-                "author": "Kshemaraja (c. 1000–1050 CE)",
-                "period": "c. 1025 CE",
-                "desc": "Authoritative commentary on the Spanda Karikas, establishing Spanda doctrine as the dynamic self-expression of Shiva-consciousness. More philosophical than Kallata's Vritti.",
-                "tradition": "Spanda",
-                "link": "https://www.wisdomlib.org/definition/spandanirnaya",
-                "archive": "https://archive.org/search?query=spanda+nirnaya+kshemaraja",
-            },
-            {
-                "title": "Shiva Sūtra Vimarśinī · शिव सूत्र विमर्शिनी",
-                "author": "Kshemaraja (c. 1025 CE)",
-                "period": "c. 1025 CE",
-                "desc": "The standard commentary on the Shiva Sutras. Illuminates all 77 sutras with deep Trika philosophy and practical guidance. Most widely studied commentary in the tradition.",
-                "tradition": "Pratyabhijña",
-                "link": "https://www.wisdomlib.org/hinduism/book/shiva-sutra-vimarsini",
-                "archive": "https://archive.org/search?query=shiva+sutra+vimarsini",
-            },
+        "Kshemaraja & Commentators · क्षेमराज": [
             {
                 "title": "Svacchanda Tantra Uddyota · स्वच्छन्द तन्त्रोद्योत",
                 "author": "Kshemaraja (c. 1025 CE)",
                 "period": "c. 1025 CE",
-                "desc": "Kshemaraja's massive commentary on Svacchanda Tantra — a primary source for Shaiva initiation, cosmology and mantra practice in Kashmir.",
+                "desc": "Kshemaraja's massive commentary on the 18-chapter Svacchanda Tantra. The primary source for Kashmiri Shaiva initiatory practice, cosmology (the 36 tattvas in detail), and the daily ritual of the Shaiva initiate (dikshita). Most comprehensive Agamic commentary in the tradition.",
                 "tradition": "Shaiva Agama",
                 "link": "https://www.wisdomlib.org/definition/svacchanda-tantra",
                 "archive": "https://archive.org/search?query=svacchandatantrauddyota+kshemaraja",
             },
-        ],
-        "Spanda & Other Schools · स्पन्द": [
             {
-                "title": "Stava Cintāmaṇi · स्तव चिन्तामणि",
-                "author": "Bhattatrayambaka",
-                "period": "c. 10th century CE",
-                "desc": "Hymn to Shiva celebrating the Spanda doctrine. Important devotional text of Kashmir Shaivism used in ritual and study.",
-                "tradition": "Spanda",
-                "link": "https://www.wisdomlib.org/definition/stavacintamani",
+                "title": "Netra Tantra Uddyota · नेत्र तन्त्रोद्योत",
+                "author": "Kshemaraja (c. 1025 CE)",
+                "period": "c. 1025 CE",
+                "desc": "Commentary on the Netra Tantra. Explains the Mrityunjaya ritual, protection rites, and the significance of the 'third eye' (netra) as the eye of Shiva-consciousness that transcends death.",
+                "tradition": "Shaiva Agama",
+                "link": "https://www.wisdomlib.org/definition/netra-tantra",
+                "archive": "https://archive.org/search?query=netra+tantra+uddyota+kshemaraja",
+            },
+            {
+                "title": "Herātrika Paddhati · हेरात्रिका पद्धति",
+                "author": "Kshemaraja (c. 1025 CE)",
+                "period": "c. 1025 CE",
+                "desc": "Ritual manual for the Trika goddess worship — the three goddesses Para, Parapara, and Apara. Documents the KP worship of the Trika deities that connects to the Herath (Shivratri) festival traditions.",
+                "tradition": "Trika / Ritual",
+                "link": "https://www.wisdomlib.org/definition/kshemaraja",
                 "archive": "",
             },
             {
-                "title": "Śivastotrāvalī · शिवस्तोत्रावली",
-                "author": "Utpaladeva (c. 925 CE)",
-                "period": "c. 925 CE",
-                "desc": "20 hymns of intense devotion to Shiva by Utpaladeva — among the most beautiful devotional poetry in Sanskrit. Demonstrates that dry philosophy was always paired with heartfelt bhakti in Kashmir Shaivism.",
+                "title": "Stava Cintāmaṇi Ṭīkā · स्तव चिन्तामणि टीका",
+                "author": "Kshemaraja (c. 1025 CE)",
+                "period": "c. 1025 CE",
+                "desc": "Commentary on Bhattatrayambaka's Stava Cintamani hymn. Demonstrates how devotional hymns encode Spanda and Trika philosophical truths.",
+                "tradition": "Spanda / Bhakti",
+                "link": "https://www.wisdomlib.org/definition/kshemaraja",
+                "archive": "",
+            },
+            {
+                "title": "Śivastotrāvalī Vivṛti · शिवस्तोत्रावली विवृति",
+                "author": "Kshemaraja (commentary on Utpaladeva)",
+                "period": "c. 1025 CE",
+                "desc": "Commentary on Utpaladeva's 20 devotional hymns to Shiva. Shows how the most philosophical thinker of Kashmir Shaivism was also the most ardent devotee — bhakti and jnana are inseparable in this tradition.",
                 "tradition": "Pratyabhijña / Bhakti",
                 "link": "https://www.wisdomlib.org/definition/shivastotravali",
                 "archive": "https://archive.org/search?query=shivastotravali+utpaladeva",
             },
         ],
-        "Nilamata Purāṇa & History · नीलमत पुराण": [
+        "Krama & Kula Darshana · क्रम और कुल": [
+            {
+                "title": "Mahānayaprakāśa · महानयप्रकाश",
+                "author": "Shitivaraha / Arnavagupta (c. 12th century CE)",
+                "period": "c. 12th century CE",
+                "desc": "One of the earliest surviving texts in the Kashmiri language (with Sanskrit passages). Documents the Krama tradition — worship of Kali in her sequential (krama) manifestations of emanation, existence, and reabsorption. Critical for understanding Kashmiri Kali traditions and the link between Sanskrit and vernacular KP literature.",
+                "tradition": "Krama",
+                "link": "https://www.wisdomlib.org/definition/mahanayaprakasha",
+                "archive": "",
+            },
+            {
+                "title": "Kramastotra · क्रमस्तोत्र",
+                "author": "Various Krama masters",
+                "period": "c. 9th–11th century CE",
+                "desc": "Hymns of the Krama tradition praising Kali in her sequential manifestations. The Krama system worships Kali as the power of time (krama = sequence) — past, present, future as three forms of the goddess. Distinct from Trika but absorbed into it by Abhinavagupta.",
+                "tradition": "Krama",
+                "link": "https://www.wisdomlib.org/definition/krama",
+                "archive": "https://archive.org/search?query=krama+tradition+kashmir+shaivism",
+            },
+            {
+                "title": "Kulārṇava Tantra · कुलार्णव तन्त्र",
+                "author": "Revealed text (Kula Āgama)",
+                "period": "c. 10th–12th century CE",
+                "desc": "17 chapters — the most comprehensive surviving Kula Agama. Covers: the nature of Kula (the Shakta family/lineage), Kaula practices, initiation by a Kula guru, non-dual consciousness, the role of the body in liberation, and Kaula worship. Widely studied in all Shakta-Shaiva traditions.",
+                "tradition": "Kula / Kaula",
+                "link": "https://www.wisdomlib.org/hinduism/book/kularnava-tantra",
+                "archive": "https://archive.org/search?query=kularnava+tantra",
+            },
+            {
+                "title": "Kaulajñānanirṇaya · कौलज्ञाननिर्णय",
+                "author": "Matsyendranatha (c. 9th–10th century CE)",
+                "period": "c. 900 CE",
+                "desc": "Attributed to Matsyendranatha — the guru of Gorakshanatha and the founder of the Natha tradition which drew heavily from Kashmiri Kaula sources. Contains the earliest surviving description of Kaulachara practices, the body as a cosmological map, and the yogini traditions.",
+                "tradition": "Kula / Natha",
+                "link": "https://www.wisdomlib.org/definition/kaulajnananirnaya",
+                "archive": "https://archive.org/search?query=kaulajnananirnaya+matsyendranatha",
+            },
+            {
+                "title": "Gorakshashatakam · गोरक्षशतकम्",
+                "author": "Gorakshanatha (c. 10th–11th century CE)",
+                "period": "c. 10th–11th century CE",
+                "desc": "100 verses on Hatha Yoga by Gorakshanatha — who drew extensively from Kashmiri Kaula-Natha sources. The physical yoga described here (Hatha) is the practical embodied path of the same tradition that Abhinavagupta systematised philosophically. Demonstrates the link between Kashmir Shaivism and the Natha yoga tradition.",
+                "tradition": "Natha / Kula / Hatha Yoga",
+                "link": "https://www.wisdomlib.org/definition/goraksha-shataka",
+                "archive": "https://archive.org/search?query=goraksha+shataka+natha",
+            },
+            {
+                "title": "Yogavāsiṣṭha (Kashmir recension) · योगवासिष्ठ",
+                "author": "Valmiki (traditional) / Kashmir recension c. 10th–12th century CE",
+                "period": "Kashmir recension c. 1000–1200 CE",
+                "desc": "The Yogavasistha (also called Moksopaya) is a massive philosophical text of ~32,000 verses in its longer recension. The Kashmir version (Moksopaya) is considered distinct and earlier than the pan-Indian version. It uses stories and dialogues to teach Advaita-Vedanta / Kashmir Shaivism philosophy — reality as pure consciousness. Composed in or strongly associated with Kashmir. Translated by Swami Venkatesananda.",
+                "tradition": "Kashmir Advaita / Shaiva Vedanta",
+                "link": "https://www.wisdomlib.org/definition/yoga-vasistha",
+                "archive": "https://archive.org/search?query=yoga+vasistha+moksopaya+kashmir",
+            },
+            {
+                "title": "Trika Sāra · त्रिक सार",
+                "author": "Abhinavagupta",
+                "period": "c. 1000 CE",
+                "desc": "A short but dense text presenting the 'essence of Trika' — the three goddesses (Para, Parapara, Apara), their relationship to the Shiva-Shakti unity, and the nature of the Trika cosmological triangle. Used as a devotional and philosophical summary in the tradition.",
+                "tradition": "Trika",
+                "link": "https://www.wisdomlib.org/definition/trika",
+                "archive": "https://archive.org/search?query=trika+sara+abhinavagupta",
+            },
+        ],
+        "Devotional & Hymn Literature · स्तोत्र साहित्य": [
+            {
+                "title": "Śivastotrāvalī · शिवस्तोत्रावली",
+                "author": "Utpaladeva (c. 925 CE)",
+                "period": "c. 925 CE",
+                "desc": "20 hymns (stotravalı) of intense devotion to Shiva — the most moving devotional poetry in the Kashmir Shaivism canon. Each hymn demonstrates that Utpaladeva's deep philosophy arose from direct experience. Key hymns: Shivastava (praise of Shiva), Paramarthacarca (discussion of supreme reality). Translated by Constantina Rhodes Bailly.",
+                "tradition": "Pratyabhijña / Bhakti",
+                "link": "https://www.wisdomlib.org/definition/shivastotravali",
+                "archive": "https://archive.org/search?query=shivastotravali+utpaladeva",
+            },
+            {
+                "title": "Mahimnastava · महिम्नस्तव",
+                "author": "Pushpadanta (c. 900–950 CE)",
+                "period": "c. 925 CE",
+                "desc": "43 verses praising the greatness (mahimna) of Shiva — one of the most beloved hymns in all of Shaivism, composed in Kashmir. Celebrates Shiva's transcendence beyond all paths and philosophies. Recited daily in KP homes and temples.",
+                "tradition": "Shaiva Bhakti",
+                "link": "https://www.wisdomlib.org/hinduism/book/mahimna-stava",
+                "archive": "https://archive.org/search?query=mahimnastava+pushpadanta",
+            },
+            {
+                "title": "Sharada Stotram · शारदा स्तोत्रम्",
+                "author": "Traditional KP authorship",
+                "period": "Medieval",
+                "desc": "The invocation of Sharada Devi — 'Ya Sharada nilotpala-dala-shyama' (She who is dark as the blue lotus petal). The primary KP hymn to Saraswati-Sharada, recited at all beginnings, on Sharada Navami, and before any scholarly work. Named after the Sharada Peeth at Sharda (PoK).",
+                "tradition": "Kashmir Shakta / Saraswati tradition",
+                "link": "https://en.wikipedia.org/wiki/Sharada_Peeth",
+                "archive": "https://archive.org/search?query=sharada+stotram+kashmiri+pandit",
+            },
+            {
+                "title": "Shiva Panchakshara Stotra · शिव पञ्चाक्षर स्तोत्र",
+                "author": "Adi Shankaracharya (c. 788–820 CE)",
+                "period": "c. 800 CE",
+                "desc": "5 verses on the five-syllable mantra Na-Ma-Shi-Va-Ya — each syllable corresponding to the five cosmic functions of Shiva (creation, preservation, dissolution, concealment, grace) and the five elements. Recited during Herath (KP Shivratri) all-night vigil.",
+                "tradition": "Shaiva / Pan-Hindu",
+                "link": "https://www.wisdomlib.org/definition/shiva-panchakshara-stotram",
+                "archive": "https://archive.org/search?query=shiva+panchakshara+stotra",
+            },
+            {
+                "title": "Mrityunjaya Mantra & Stotra · मृत्युञ्जय",
+                "author": "Rigveda (Vamadeva Rishi) / expanded by tradition",
+                "period": "Vedic / Medieval",
+                "desc": "The Tryambaka mantra of the Rigveda (RV 7.59.12) — 'Tryambakam yajamahe sugandhim pushtivardhanam' — as developed in the Netra Tantra and Kashmiri Shaiva tradition. Used in Kashmiri Pandit rituals for longevity, healing, and at death rites. The Mrityunjaya tradition is specifically elaborated in the Kashmiri Netra Tantra.",
+                "tradition": "Vedic / Shaiva Agama",
+                "link": "https://www.wisdomlib.org/definition/mahamrityunjaya",
+                "archive": "https://archive.org/search?query=mrityunjaya+mantra+netra+tantra",
+            },
+            {
+                "title": "Vakhs of Lalleshwari · लल वाख",
+                "author": "Lalleshwari / Lal Ded (c. 1320–1392 CE)",
+                "period": "14th century CE",
+                "desc": "258+ mystic verses in Old Kashmiri — the oldest surviving Kashmiri literature. Core teaching: Shivoham (I am Shiva). Key Vakhs: 'Shiv chuy thali thali rozaan' (Shiva pervades everywhere), 'Pranas apanas milawath karim' (when prana and apana unite, Shiva-Shakti are one). The foundational text of all later KP devotional and literary tradition.",
+                "tradition": "Kashmir Shaivism / Pratyabhijña / Bhakti",
+                "link": "https://en.wikipedia.org/wiki/Lalleshwari",
+                "archive": "https://archive.org/search?query=lal+ded+vakhs+lalleshwari+kashmiri",
+            },
+            {
+                "title": "Shiva Tandava Stotra · शिव तान्डव स्तोत्र",
+                "author": "Ravana (traditional attribution)",
+                "period": "Ancient / Medieval",
+                "desc": "17 verses of intense Shiva praise — arguably the most powerful hymn in all of Shaivism. Each verse a torrent of compound Sanskrit describing Shiva's cosmic dance. 'Jatatavigalajjala...' — among the most recited Sanskrit texts in KP households. Recited during Herath vigil and Shivratri worship across all KP families.",
+                "tradition": "Shaiva Bhakti",
+                "link": "https://www.wisdomlib.org/definition/shiva-tandava-stotra",
+                "archive": "https://archive.org/search?query=shiva+tandava+stotra",
+            },
+            {
+                "title": "Rudrashtakam · रुद्राष्टकम्",
+                "author": "Tulsidas (16th century CE) / also traditional versions",
+                "period": "16th century CE / traditional",
+                "desc": "8 verses glorifying Rudra-Shiva. 'Namami Shamishan Nirvana Rupam...' — begins with salutation to Shiva in his supreme formless aspect (nirvana rupa) and proceeds through his many forms. Widely recited by KP families during morning puja and Herath. The Kashmiri tradition has its own variant verses in the Rudrashtakam.",
+                "tradition": "Shaiva Bhakti",
+                "link": "https://www.wisdomlib.org/definition/rudrashtaka",
+                "archive": "https://archive.org/search?query=rudrashtakam+shiva+stotram",
+            },
+            {
+                "title": "Lingashtakam · लिंगाष्टकम्",
+                "author": "Traditional (attributed to Adi Shankaracharya)",
+                "period": "Medieval",
+                "desc": "8 verses on the Shiva Linga — 'Brahma Muraari Sura Archita Lingam...' Glorifies the Shiva Linga as the form worshipped by Brahma, Vishnu, and all gods. Central to KP Shiva puja — the Herath Vatak pots represent the 12 Jyotirlingas, and the Lingashtakam is recited during their installation.",
+                "tradition": "Shaiva Bhakti",
+                "link": "https://www.wisdomlib.org/definition/linga-ashtaka",
+                "archive": "https://archive.org/search?query=lingashtakam+shiva",
+            },
+            {
+                "title": "Devi Mahatmya (Durga Saptashati) · देवी माहात्म्य",
+                "author": "Markandeya Purana / Vedavyasa (traditional)",
+                "period": "c. 400–600 CE",
+                "desc": "700 verses from the Markandeya Purana in three episodes — Madhu-Kaitabha, Mahishasura, and Shumbha-Nishumbha. The supreme text of Shakta tradition. Recited by KP families during all nine nights of Navratri. The Kashmiri Pandit tradition has specific recitation customs: beginning with Siddha Kunjika Stotra, daily recitation of specific chapters, ending with Kshama Prarthana.",
+                "tradition": "Shakta / Devi worship",
+                "link": "https://www.wisdomlib.org/hinduism/book/devi-mahatmya",
+                "archive": "https://archive.org/search?query=devi+mahatmya+durga+saptashati",
+            },
+            {
+                "title": "Lalita Sahasranama · ललिता सहस्रनाम",
+                "author": "Brahmanda Purana (Hayagriva to Agastya)",
+                "period": "c. 700–1000 CE",
+                "desc": "1000 names of the Goddess Lalita Tripurasundari — the same goddess as Tripura Sundari of Kashmir (Kulgam) and the supreme Shakti of the Trika. Each name is a concentrated mantra. Recited by KP families on Navratri and Sharad Purnima. Philosophically, the names encode the entire Shakta cosmology of the Srikula tradition.",
+                "tradition": "Shakta / Srikula / Trika",
+                "link": "https://www.wisdomlib.org/hinduism/book/lalita-sahasranama",
+                "archive": "https://archive.org/search?query=lalita+sahasranama",
+            },
+        ],
+        "Nilamata & Kashmir History · नीलमत एवं इतिहास": [
             {
                 "title": "Nīlamata Purāṇa · नीलमत पुराण",
-                "author": "Unknown (Kashmirian)",
+                "author": "Unknown Kashmirian author",
                 "period": "c. 6th–8th century CE",
-                "desc": "The oldest known Kashmiri text — describes the origin of Kashmir Valley (from the lake Satisar), its geography, the festivals, rituals and customs of Kashmiri people. Primary source for KP customs, Naga worship, and Herath.",
+                "desc": "The oldest known Kashmiri text — 2156 verses. Describes: the mythological origin of Kashmir Valley (the drying of lake Satisar by Vitasta), the geography of the valley, a complete calendar of festivals and rituals (primary source for Herath, Navreh, Nag worship), and the customs of Kashmiri people. The Vitasta Stotram within is recited by KP priests. Translated by Ved Kumari Ghai (JKAAS).",
                 "tradition": "Kashmiri Puranic tradition",
                 "link": "https://www.wisdomlib.org/hinduism/book/nilamata-purana",
                 "archive": "https://archive.org/search?query=nilamata+purana+kashmir",
@@ -3285,19 +3779,203 @@ with tabs[5]:
                 "title": "Rājataraṅgiṇī · राजतरङ्गिणी",
                 "author": "Kalhana (c. 1150 CE)",
                 "period": "c. 1150 CE",
-                "desc": "Kashmir's great chronicle — 8 Tarangas (waves), ~7826 verses. The history of Kashmir from mythological times to 1150 CE. First systematic historical work in Sanskrit. Invaluable for KP lineage, geography and culture.",
+                "desc": "Kashmir's great chronicle — 8 Tarangas (waves/cantos), ~7826 verses in Sanskrit. History from mythological Gonanda dynasty to Kalhana's own time (1149 CE). First systematic historical work in Sanskrit. Invaluable for KP lineage, temple geography, Kashmiri kings, and cultural history. Continued by Jonaraja (1459 CE), Shrivara (1477), and Prajna Bhatta (1586). Translated by Sir M.A. Stein.",
                 "tradition": "History / Itihas",
                 "link": "https://www.wisdomlib.org/hinduism/book/rajatarangini",
                 "archive": "https://archive.org/search?query=rajatarangini+kalhana",
             },
             {
+                "title": "Jonarāja's Rājataraṅgiṇī (continuation) · जोनराज",
+                "author": "Jonaraja (c. 1420–1459 CE)",
+                "period": "c. 1459 CE",
+                "desc": "First continuation of Kalhana's chronicle — covers Kashmir history from c. 1150 to 1459 CE. Written in the court of Sultan Zayn-ul-Abidin (Bud Shah) of Kashmir. Jonaraja was a Kashmiri Pandit scholar who continued the Sanskrit chronicle tradition through the Sultanate period.",
+                "tradition": "History / Itihas",
+                "link": "https://en.wikipedia.org/wiki/Jonaraja",
+                "archive": "https://archive.org/search?query=jonaraja+rajatarangini+kashmir",
+            },
+            {
+                "title": "Shrivara's Jāinarājataraṅgiṇī · श्रीवर",
+                "author": "Shrivara (c. 1477 CE)",
+                "period": "c. 1477 CE",
+                "desc": "Second continuation of the Rajatarangini by Shrivara, also a KP scholar in the Sultani court. Covers 1459–1486 CE including the reign of Sultan Hassan Shah. Important for understanding the KP experience under Kashmir's Sultanate rulers.",
+                "tradition": "History / Itihas",
+                "link": "https://en.wikipedia.org/wiki/Shrivara",
+                "archive": "https://archive.org/search?query=shrivara+rajatarangini",
+            },
+            {
                 "title": "Mahānayaprakāśa · महानयप्रकाश",
-                "author": "Shitivaraha / Arnavagupta",
+                "author": "Shitivaraha / Arnavagupta (c. 12th century CE)",
                 "period": "c. 12th century CE",
-                "desc": "Important Krama text in Old Kashmiri (one of the earliest surviving texts in the Kashmiri language) with Sanskrit portions. Documents the Krama tradition of goddess worship.",
+                "desc": "Earliest surviving substantial text in the Kashmiri language — bilingual (Old Kashmiri and Sanskrit). Documents the Krama goddess tradition. Critical bridge between Sanskrit scholarly Shaivism and vernacular Kashmiri spiritual expression. Precedes Lal Ded's Vakhs by two centuries.",
                 "tradition": "Krama",
                 "link": "https://www.wisdomlib.org/definition/mahanayaprakasha",
                 "archive": "",
+            },
+            {
+                "title": "Vitasta Māhātmya · वितस्ता माहात्म्य",
+                "author": "Traditional (Kashmiri)",
+                "period": "Medieval",
+                "desc": "The glorification of the river Vitasta (Jhelum) — the sacred mother-river of Kashmir mentioned in the Rigveda (Nadistuti, 10.75). The Nilamata Purana contains the core Vitasta Stotram. The river's source at Verinag (Anantnag) is a major KP pilgrimage site. Shraddha rites performed on its banks. Water used in all KP rituals.",
+                "tradition": "Kashmiri river-goddess worship",
+                "link": "https://en.wikipedia.org/wiki/Jhelum_River",
+                "archive": "https://www.wisdomlib.org/hinduism/book/nilamata-purana",
+            },
+            {
+                "title": "Haracharita Cintamani · हरचरित चिन्तामणि",
+                "author": "Jayadratha (c. 12th century CE)",
+                "period": "c. 1150–1200 CE",
+                "desc": "A Sanskrit text on the deeds of Hara (Shiva) — part of the rich tradition of Shiva hagiography in Kashmir. Compiled around the same period as Kalhana's Rajatarangini, it documents the mythology and sacred sites of Kashmir from a Shaiva perspective.",
+                "tradition": "Kashmir Shaiva / History",
+                "link": "https://www.wisdomlib.org/definition/hara",
+                "archive": "https://archive.org/search?query=haracharita+cintamani+kashmir",
+            },
+            {
+                "title": "Kathasaritsagara · कथासरित्सागर",
+                "author": "Somadeva (c. 1063–1081 CE)",
+                "period": "c. 1063–1081 CE",
+                "desc": "18 books, 124 chapters, 21,388 verses — 'The Ocean of the Rivers of Story'. Written by the Kashmiri Pandit Somadeva for Queen Suryamati. Drawn from Gunadhya's lost Brihatkatha. Contains 350+ stories: frame tales, fairy tales, folk stories, philosophical parables. Source for stories in Arabian Nights, Panchatantra, and European folk literature. One of the greatest literary works of ancient India — and a KP achievement.",
+                "tradition": "Sanskrit literature / Kashmir",
+                "link": "https://en.wikipedia.org/wiki/Kathasaritsagara",
+                "archive": "https://archive.org/search?query=kathasaritsagara+somadeva",
+            },
+            {
+                "title": "Vikramankadevacharita · विक्रमाङ्कदेवचरित",
+                "author": "Bilhana of Kashmir (c. 1050–1100 CE)",
+                "period": "c. 1086 CE",
+                "desc": "Sanskrit court epic by the Kashmiri poet Bilhana, celebrating his patron King Vikramaditya VI of Chalukya dynasty. 18 cantos of polished Sanskrit verse — demonstrates the high level of Sanskrit literary culture carried by KP scholars who traveled and became court poets across India. His Chaurapanchasika is equally celebrated.",
+                "tradition": "Sanskrit literature / Kashmir school",
+                "link": "https://en.wikipedia.org/wiki/Bilhana",
+                "archive": "https://archive.org/search?query=vikramankadevacharita+bilhana",
+            },
+        ],
+        "Swami Lakshman Joo · स्वामी लक्ष्मण जू": [
+            {
+                "title": "Kashmir Shaivism: The Secret Supreme",
+                "author": "Swami Lakshman Joo (1907–1991 CE)",
+                "period": "20th century CE (teachings recorded 1970s–80s)",
+                "desc": "The most accessible introduction to Kashmir Shaivism by the last great master of the living tradition. Covers: the 36 tattvas, the three Upayas, the seven states of the percipient (pramata), and the path to liberation through recognition (pratyabhijña). Based on oral teachings given to Western and Indian students. Published by Universal Shaiva Fellowship.",
+                "tradition": "Pratyabhijña / Living tradition",
+                "link": "https://en.wikipedia.org/wiki/Lakshman_Joo",
+                "archive": "https://archive.org/search?query=lakshman+joo+kashmir+shaivism",
+            },
+            {
+                "title": "Shiva Sutras: The Supreme Awakening",
+                "author": "Swami Lakshman Joo (teachings) / edited disciples",
+                "period": "20th century CE",
+                "desc": "Swami Lakshman Joo's oral commentary on all 77 Shiva Sutras — the most authoritative modern explanation of the text from within the living Kashmiri tradition. Explains the three Upayas with practical clarity. Essential companion to Kshemaraja's Vimarsini.",
+                "tradition": "Pratyabhijña",
+                "link": "https://en.wikipedia.org/wiki/Lakshman_Joo",
+                "archive": "https://archive.org/search?query=lakshman+joo+shiva+sutras",
+            },
+            {
+                "title": "Vijnanabhairava: The Practice of Centring Awareness",
+                "author": "Swami Lakshman Joo (commentary)",
+                "period": "20th century CE",
+                "desc": "Swami Lakshman Joo's explanation of the 112 dharanas of the Vijnanabhairava Tantra. Gives the practical method for each dharana as used in the Kashmir Shaiva sadhana tradition. Unique because it comes from a master who personally practised these techniques.",
+                "tradition": "Trika / Shaiva Agama",
+                "link": "https://en.wikipedia.org/wiki/Lakshman_Joo",
+                "archive": "https://archive.org/search?query=lakshman+joo+vijnana+bhairava",
+            },
+            {
+                "title": "Bhagavad Gita: In the Light of Kashmir Shaivism",
+                "author": "Swami Lakshman Joo",
+                "period": "20th century CE",
+                "desc": "A unique reading of the Bhagavad Gita through the lens of Kashmir Shaivism — demonstrating that the Gita's teachings align with and are illuminated by the Trika and Pratyabhijña darshana. Shows how KP tradition synthesised Shaiva and Vaishnava streams.",
+                "tradition": "Pratyabhijña / Vedanta synthesis",
+                "link": "https://en.wikipedia.org/wiki/Lakshman_Joo",
+                "archive": "https://archive.org/search?query=lakshman+joo+bhagavad+gita",
+            },
+            {
+                "title": "Self Realization in Kashmir Shaivism",
+                "author": "Swami Lakshman Joo",
+                "period": "20th century CE",
+                "desc": "Oral teachings of Swami Lakshman Joo compiled by John Hughes — covers the complete path of Kashmir Shaivism from the perspective of direct experience. Includes his commentary on the recognition path, the nature of Shiva-consciousness, and the role of the guru. More personal and experiential than his academic works.",
+                "tradition": "Pratyabhijña / Living tradition",
+                "link": "https://en.wikipedia.org/wiki/Lakshman_Joo",
+                "archive": "https://archive.org/search?query=lakshman+joo+self+realization",
+            },
+            {
+                "title": "Vijnanabhairava: The Manual for Self Realization",
+                "author": "Swami Lakshman Joo (commentary)",
+                "period": "20th century CE",
+                "desc": "Swami Lakshman Joo's practical commentary on the 112 dharanas of the Vijnanabhairava Tantra. Each dharana explained as a living practice — how to enter the pure awareness of Bhairava through breath, sound, void, sleep, and daily experience. Unique authority: he personally practised these techniques across 80+ years of sadhana.",
+                "tradition": "Trika / Shaiva Agama",
+                "link": "https://en.wikipedia.org/wiki/Lakshman_Joo",
+                "archive": "https://archive.org/search?query=lakshman+joo+vijnanabhairava",
+            },
+            {
+                "title": "Paratrishika Vivarana (Lakshman Joo's commentary)",
+                "author": "Swami Lakshman Joo (oral commentary on Abhinavagupta)",
+                "period": "20th century CE",
+                "desc": "Recorded lectures explaining Abhinavagupta's Paratrishika Vivarana — among the most esoteric texts of Kashmir Shaivism. Swami Lakshman Joo's oral explanation makes the phonematic cosmology (Matrika), the supreme mantra AHAM, and the Kula transmission accessible to modern students.",
+                "tradition": "Trika / Kula",
+                "link": "https://en.wikipedia.org/wiki/Lakshman_Joo",
+                "archive": "https://archive.org/search?query=lakshman+joo+paratrishika",
+            },
+        ],
+        "Academic & Modern Scholars · आधुनिक विद्वान": [
+            {
+                "title": "Kashmir Shaivism (Mark Dyczkowski)",
+                "author": "Mark S.G. Dyczkowski",
+                "period": "20th–21st century CE",
+                "desc": "The most comprehensive academic study of Kashmir Shaivism in English. Dyczkowski studied directly under Swami Lakshman Joo and is the foremost Western scholar of the tradition. Key works: 'The Doctrine of Vibration' (Spanda), 'The Canon of the Shaivagama', 'A Journey in the World of the Tantras'. His translations of the Stanzas on Vibration (Spanda Karikas) are authoritative.",
+                "tradition": "Academic / Spanda / Agama",
+                "link": "https://en.wikipedia.org/wiki/Mark_S.G._Dyczkowski",
+                "archive": "https://archive.org/search?query=dyczkowski+kashmir+shaivism",
+            },
+            {
+                "title": "The Triadic Heart of Shiva (Paul Muller-Ortega)",
+                "author": "Paul Eduardo Muller-Ortega",
+                "period": "20th century CE",
+                "desc": "Authoritative study of the Paratrishika Vivarana and the Kula tradition in Kashmir Shaivism. Explores the 'heart' (hridaya) as the centre of Shiva-consciousness in Abhinavagupta's thought. One of the finest academic works on the esoteric aspects of Kashmir Shaivism.",
+                "tradition": "Academic / Trika / Kula",
+                "link": "https://en.wikipedia.org/wiki/Paul_Eduardo_Muller-Ortega",
+                "archive": "https://archive.org/search?query=muller+ortega+triadic+heart+shiva",
+            },
+            {
+                "title": "Abhinavagupta: An Historical and Philosophical Study (K.C. Pandey)",
+                "author": "K.C. Pandey",
+                "period": "1935 CE (1st ed.)",
+                "desc": "The first comprehensive scholarly monograph on Abhinavagupta in English. Still essential reading — covers his life, the philosophical context, his works, and the Pratyabhijña system. The Chowkhamba Sanskrit Series edition has been widely used in universities.",
+                "tradition": "Academic / Pratyabhijña",
+                "link": "https://archive.org/search?query=KC+Pandey+Abhinavagupta",
+                "archive": "https://archive.org/search?query=KC+Pandey+Abhinavagupta+historical+philosophical",
+            },
+            {
+                "title": "Kashmir Shaivism: The Central Philosophy (Jaideva Singh)",
+                "author": "Jaideva Singh",
+                "period": "20th century CE",
+                "desc": "Jaideva Singh's translations and studies are the standard academic texts on Kashmir Shaivism. His works: Pratyabhijnahridayam (translation), Shiva Sutras (translation), Spanda Karikas (translation), Vijnanabhairava (translation). Published by Motilal Banarsidass — still the most widely used translations in English.",
+                "tradition": "Academic / Pratyabhijña / Spanda",
+                "link": "https://archive.org/search?query=jaideva+singh+kashmir+shaivism",
+                "archive": "https://archive.org/search?query=jaideva+singh+pratyabhijna+shiva+sutras",
+            },
+            {
+                "title": "The Recognition Sutras (Christopher Wallis)",
+                "author": "Christopher Wallis (Hareesh)",
+                "period": "21st century CE (2017)",
+                "desc": "Modern translation and commentary on Kshemaraja's Pratyabhijnahridayam — making this foundational text fully accessible to contemporary readers. Wallis studied Sanskrit at Oxford and UC Berkeley and is one of the foremost contemporary teachers of Kashmir Shaivism. His approach balances rigorous scholarship with living practice.",
+                "tradition": "Pratyabhijña / Modern",
+                "link": "https://en.wikipedia.org/wiki/Christopher_Wallis_(scholar)",
+                "archive": "https://archive.org/search?query=christopher+wallis+recognition+sutras",
+            },
+            {
+                "title": "The Doctrine of Vibration (Mark Dyczkowski)",
+                "author": "Mark S.G. Dyczkowski",
+                "period": "1987 CE",
+                "desc": "Definitive academic study of the Spanda doctrine — the philosophy of divine vibration in Kashmir Shaivism. Covers: Vasugupta's Shiva Sutras, Kallata's Spanda Karikas, Kshemaraja's Spanda Nirnaya, and the Spanda school's relationship to Pratyabhijña. Essential for understanding the Spanda tradition.",
+                "tradition": "Academic / Spanda",
+                "link": "https://archive.org/search?query=dyczkowski+doctrine+vibration",
+                "archive": "https://archive.org/search?query=dyczkowski+doctrine+vibration+spanda",
+            },
+            {
+                "title": "Kashmir Series of Texts and Studies (KSTS)",
+                "author": "Edited by Mukund Ram Shastri, Madhusudan Kaul Shastri and others",
+                "period": "1911–1947 CE",
+                "desc": "The monumental publication series by the Research Department, Jammu & Kashmir State — 84 volumes of critical editions of Kashmir Shaivism manuscripts. Published the complete Sanskrit texts of: Tantraloka (with Jayaratha's Viveka), Spanda Karikas, Shiva Sutras, Pratyabhijnahridayam, Svacchanda Tantra, Netra Tantra, and dozens of other texts for the first time. The foundation of all modern academic study of Kashmir Shaivism.",
+                "tradition": "Academic / Editorial",
+                "link": "https://archive.org/search?query=KSTS+Kashmir+Series+Texts+Studies",
+                "archive": "https://archive.org/search?query=Kashmir+Series+of+Texts+and+Studies",
             },
         ],
     }
@@ -5075,76 +5753,442 @@ with tabs[6]:
         ],
         "Cuisine · व्यंजन": [
             {
-                "name": "Wazwan · वाज़वान",
-                "icon": "",
-                "timing": "Weddings and major celebrations",
-                "desc": (
-                    "The grand Kashmiri feast — a 36-course ritual meal at weddings. "
-                    "Must-have dishes: Rogan Josh, Yakhni, Tabak Maaz (fried ribs), Seekh Kabab, "
-                    "Gushtaba (minced meat balls in yogurt gravy — the final 'king dish'), "
-                    "Methi Maaz, Dhaniwal Korma. Waza (master chef) cooks on wood fire. "
-                    "Served on a large copper plate (traem) shared between 4 people."
-                ),
-                "links": [
-                    ("Wikipedia · Wazwan", "https://en.wikipedia.org/wiki/Wazwan"),
-                ],
-            },
-            {
-                "name": "Kashmiri Pandit Cuisine · कश्मीरी पण्डित रसोई",
+                "name": "KP Cuisine — Overview · कश्मीरी पण्डित रसोई",
                 "icon": "",
                 "timing": "Daily and festive",
                 "desc": (
-                    "KP cuisine uses no onion or garlic — flavoured with asafoetida (heeng), "
-                    "dry ginger (sounth), fennel (saunf), and kashmiri red chilli. "
-                    "Key dishes: Haakh (collard greens in mustard oil), Dum Aloo (potatoes in spiced yogurt), "
-                    "Chaman (paneer), Nadru (lotus stem), Rajma, Modur Pulav (sweet rice), "
-                    "Shab Deg (turnip & meat slow-cooked overnight). "
-                    "Festival sweet: Shufta (dry fruits in sugar syrup)."
+                    "Kashmiri Pandit cuisine is strictly sattvic — NO onion, NO garlic. "
+                    "The defining spice base: asafoetida (heeng/hing), dry ginger (sounth), "
+                    "fennel seeds (saunf/badiyan), Kashmiri red chilli (deghi mirch — colour without heat), "
+                    "turmeric (haldi), whole cardamom (elaichi), cloves (laung), "
+                    "cinnamon (dalchini), black pepper, and mustard oil (sarson ka tel) or ghee.\n\n"
+                    "The layering method: in KP cooking, spices are added sequentially to hot mustard oil — "
+                    "first heeng blooms (5 seconds), then whole spices (30 seconds), then powdered spices "
+                    "in the steam of the ingredient — never in raw oil to avoid burning.\n\n"
+                    "Key vegetarian pillars: Haakh, Dum Aloo, Chaman, Nadru, Rajma, Modur Pulav, "
+                    "Shufta, Al Yakhni, Nadru Yakhni, Chaman Yakhni, Mujj Gaad."
                 ),
                 "links": [
                     ("Wikipedia · Kashmiri Cuisine", "https://en.wikipedia.org/wiki/Kashmiri_cuisine"),
                 ],
             },
             {
-                "name": "Kehwa · केहवा",
+                "name": "Haakh · हाख (KP Collard Greens)",
+                "icon": "",
+                "timing": "Daily — the soul of KP food",
+                "desc": (
+                    "HAAKH is the most essential KP vegetarian dish — a type of collard greens "
+                    "(Brassica oleracea / kale family) unique to Kashmir. Cannot be substituted.\n\n"
+                    "── INGREDIENTS (serves 4) ──\n"
+                    "· 500g fresh Haakh leaves (or substitute: kale/collard greens)\n"
+                    "· 3 tbsp mustard oil\n"
+                    "· ¼ tsp asafoetida (heeng)\n"
+                    "· 2–3 whole dried Kashmiri red chillies\n"
+                    "· ½ tsp dry ginger powder (sounth)\n"
+                    "· Salt to taste · Water as needed\n\n"
+                    "── PROCESS ──\n"
+                    "1. PREP: Wash Haakh thoroughly. Remove thick stems. Tear large leaves. Keep small leaves whole.\n"
+                    "2. HEAT OIL: Heat mustard oil in a heavy-bottomed pot to smoking point (this removes the pungency). "
+                    "Remove from flame, let cool 10 seconds — oil should still be very hot.\n"
+                    "3. HEENG BLOOM: Return to medium heat. Add heeng — it will sizzle and bloom in 5–8 seconds. "
+                    "This is the defining KP flavour step — do not skip.\n"
+                    "4. CHILLI: Add whole dry red chillies — fry 20 seconds until they darken.\n"
+                    "5. GREENS: Add Haakh all at once — it will splutter. Stir quickly. "
+                    "Add ½ cup water immediately to prevent burning.\n"
+                    "6. SPICE: Add sounth (dry ginger) and salt. Stir well.\n"
+                    "7. COOK: Cover and cook on medium-low heat 15–20 minutes. "
+                    "Haakh should be tender but not mushy. Water should be almost gone — "
+                    "a small amount of dark green liquid (the 'stock') remains. This liquid is precious — do not drain.\n"
+                    "8. FINISH: Remove lid, raise heat for 2 minutes to concentrate. Taste for salt.\n\n"
+                    "SERVE: With plain boiled rice. The Haakh liquid is poured over rice first, then the greens alongside. "
+                    "Eaten with finger — traditional KP style. No accompaniment needed.\n\n"
+                    "RITUAL NOTE: Haakh is served at every KP meal — weddings, shraddha, Navreh. "
+                    "Without Haakh there is no proper KP meal."
+                ),
+                "links": [
+                    ("Wikipedia · Haakh", "https://en.wikipedia.org/wiki/Haakh"),
+                ],
+            },
+            {
+                "name": "Dum Aloo · दम आलू (KP Style)",
+                "icon": "",
+                "timing": "Festivals, weddings, daily",
+                "desc": (
+                    "The jewel of KP vegetarian cooking — slow-cooked baby potatoes in an aromatic "
+                    "yogurt-based spice gravy. Fundamentally different from Punjabi Dum Aloo "
+                    "(which uses onion-garlic). The KP version is lighter, more fragrant, and relies "
+                    "entirely on the spice-yogurt technique.\n\n"
+                    "── INGREDIENTS (serves 4) ──\n"
+                    "· 500g baby potatoes (small, uniform)\n"
+                    "· 1 cup full-fat yogurt (whisked smooth)\n"
+                    "· 4 tbsp mustard oil\n"
+                    "· ½ tsp asafoetida (heeng)\n"
+                    "· 1 tsp Kashmiri red chilli powder (deghi mirch)\n"
+                    "· 1 tsp fennel powder (saunf)\n"
+                    "· ½ tsp dry ginger powder (sounth)\n"
+                    "· ½ tsp turmeric\n"
+                    "· 4 green cardamoms · 2 black cardamoms · 4 cloves · 1 bay leaf\n"
+                    "· 1 tsp salt · ½ cup water\n\n"
+                    "── PROCESS ──\n"
+                    "1. POTATOES: Boil baby potatoes until just cooked (not soft). Peel. "
+                    "Prick each potato all over with a fork — this allows the gravy to penetrate.\n"
+                    "2. FRY POTATOES: Heat 3 tbsp mustard oil to smoking. Cool 10 seconds. "
+                    "Fry the pricked potatoes on medium heat until golden-brown on all sides (8–10 min). "
+                    "Remove and set aside.\n"
+                    "3. MAKE GRAVY: In the same oil, heat to medium. Add heeng — bloom 5 seconds. "
+                    "Add green cardamoms, black cardamoms, cloves, bay leaf — fry 30 seconds.\n"
+                    "4. SPICE PASTE: Lower heat. Add Kashmiri chilli powder and turmeric — stir for 20 seconds "
+                    "in the oil (do NOT add to raw oil; add when oil is warm-medium). "
+                    "Add 2 tbsp water to form a paste, cook 1 minute.\n"
+                    "5. YOGURT: Add whisked yogurt 1 tbsp at a time, stirring continuously on low heat "
+                    "after each addition to prevent curdling. This is the critical technique — "
+                    "patience here defines the quality of the dish.\n"
+                    "6. BUILD GRAVY: Once all yogurt is incorporated, add fennel powder and sounth. "
+                    "Add ½ cup water. Bring to gentle simmer.\n"
+                    "7. DUM (SLOW COOK): Add fried potatoes. Cover with tight lid. "
+                    "Cook on lowest flame 20–25 minutes (dum = steam cooking). "
+                    "The potatoes absorb all the flavours. Gravy thickens to a coating consistency.\n"
+                    "8. FINISH: Check salt. The oil should float on top as a red layer — this is correct. "
+                    "Garnish with fresh coriander (optional — some KPs avoid it).\n\n"
+                    "SERVE: With rice or Girda bread. The signature dish of any KP feast."
+                ),
+                "links": [
+                    ("Wikipedia · Dum Aloo", "https://en.wikipedia.org/wiki/Dum_Aloo"),
+                ],
+            },
+            {
+                "name": "Chaman · छमन (Kashmiri Paneer)",
+                "icon": "",
+                "timing": "Festive — weddings, Navreh",
+                "desc": (
+                    "KP-style paneer (cottage cheese) cooked in a fragrant yogurt-fennel gravy — "
+                    "one of the most beloved vegetarian dishes of the KP kitchen. "
+                    "'Chaman' means 'garden' in Kashmiri — the dish is named for its fresh, green-tinged colour.\n\n"
+                    "── INGREDIENTS (serves 4) ──\n"
+                    "· 250g fresh paneer, cut into 1.5-inch cubes\n"
+                    "· ¾ cup yogurt (whisked)\n"
+                    "· 3 tbsp mustard oil\n"
+                    "· ¼ tsp asafoetida\n"
+                    "· 1 tsp Kashmiri chilli powder\n"
+                    "· 1½ tsp fennel powder (saunf)\n"
+                    "· ½ tsp dry ginger (sounth)\n"
+                    "· ½ tsp turmeric\n"
+                    "· 3 green cardamoms · 2 cloves\n"
+                    "· ½ tsp salt · ½ cup milk or water\n\n"
+                    "── PROCESS ──\n"
+                    "1. FRY PANEER: Heat mustard oil to smoking, cool 10 seconds. "
+                    "Fry paneer cubes on medium heat until lightly golden (2–3 min per side). "
+                    "Remove. (Optional: soak fried paneer in warm salted water 10 minutes to keep soft.)\n"
+                    "2. SPICE BASE: In same oil on medium-low, add heeng — bloom. "
+                    "Add cardamoms and cloves — 20 seconds. "
+                    "Add turmeric and chilli powder — stir 15 seconds.\n"
+                    "3. YOGURT: Add whisked yogurt slowly, 1 tbsp at a time, stirring constantly. "
+                    "Cook on low heat 5 minutes until oil separates.\n"
+                    "4. SPICES: Add fennel powder and sounth. Add milk/water. Simmer 5 minutes.\n"
+                    "5. PANEER: Add paneer cubes gently. Simmer covered 10 minutes on low. "
+                    "The gravy coats each piece. Do not stir vigorously — paneer will break.\n"
+                    "6. FINISH: Check salt. A few strands of saffron dissolved in warm milk "
+                    "can be added at end for colour and fragrance.\n\n"
+                    "SERVE: With rice. The gravy should be semi-thick, fragrant, and golden-orange."
+                ),
+                "links": [
+                    ("Wikipedia · Kashmiri Cuisine", "https://en.wikipedia.org/wiki/Kashmiri_cuisine"),
+                ],
+            },
+            {
+                "name": "Nadru (Lotus Stem) · नद्रु — Nadru Yakhni & Nadru Palak",
+                "icon": "",
+                "timing": "Year-round — harvest from Dal Lake",
+                "desc": (
+                    "Nadru (lotus root/stem) is unique to Kashmiri cuisine — harvested from Dal and Wular lakes. "
+                    "Crunchy, starchy, with a hollow cross-section. Used in two classic KP recipes:\n\n"
+                    "── NADRU YAKHNI (in yogurt gravy) ──\n"
+                    "INGREDIENTS: 300g nadru (cleaned, sliced into ½-inch rounds), 1 cup yogurt (whisked), "
+                    "3 tbsp mustard oil, ¼ tsp heeng, 1 tsp fennel powder, ½ tsp sounth, "
+                    "3 green cardamoms, 2 cloves, salt.\n\n"
+                    "PROCESS:\n"
+                    "1. BLANCH: Boil nadru slices 5 minutes. Drain. This removes any rawness.\n"
+                    "2. FRY: In hot mustard oil, add heeng + cardamoms + cloves. Add blanched nadru. "
+                    "Fry 5 minutes on medium until lightly golden at edges.\n"
+                    "3. YOGURT GRAVY: On low heat, add whisked yogurt 1 tbsp at a time, stirring continuously. "
+                    "Add fennel and sounth. Add ½ cup water. Cover and simmer 15 min on low.\n"
+                    "4. FINISH: The gravy should be white, fragrant with fennel. "
+                    "Oil floats on top — this is correct.\n\n"
+                    "── NADRU PALAK (with spinach) ──\n"
+                    "PROCESS: Sauté blanched nadru + blanched spinach in mustard oil with heeng, "
+                    "Kashmiri chilli, sounth, fennel. No yogurt. Dry-ish texture. "
+                    "Spinach turns deep green and coats the nadru.\n\n"
+                    "── NADRU CHIPS (Nadru Monje) ──\n"
+                    "Slice nadru thin (3mm), coat in rice flour batter with Kashmiri chilli and fennel, "
+                    "deep fry until crisp. Street food of Srinagar."
+                ),
+                "links": [
+                    ("Wikipedia · Lotus Stem Curry", "https://en.wikipedia.org/wiki/Lotus_stem"),
+                ],
+            },
+            {
+                "name": "Al Yakhni · आल यखनी (Turnip in Yogurt)",
+                "icon": "",
+                "timing": "Winter — turnip season",
+                "desc": (
+                    "Al = turnip in Kashmiri. Yakhni = yogurt-based white gravy. "
+                    "A humble but deeply flavoured winter dish — the turnip absorbs the fennel-yogurt gravy beautifully.\n\n"
+                    "── INGREDIENTS (serves 4) ──\n"
+                    "· 4 medium turnips, peeled and quartered\n"
+                    "· 1 cup yogurt (whisked)\n"
+                    "· 3 tbsp mustard oil\n"
+                    "· ¼ tsp heeng · 3 green cardamoms · 2 cloves\n"
+                    "· 1½ tsp fennel powder · ½ tsp sounth · Salt\n\n"
+                    "── PROCESS ──\n"
+                    "1. PREP TURNIPS: Peel and quarter. Boil or pressure-cook until just tender (not mushy).\n"
+                    "2. FRY TURNIPS: In hot mustard oil, fry cooked turnips until golden. Remove.\n"
+                    "3. YAKHNI BASE: In remaining oil, bloom heeng. Add cardamoms + cloves. "
+                    "On low heat, add whisked yogurt slowly — 1 tbsp at a time, stirring constantly. "
+                    "This prevents the yogurt from breaking (the most critical step in all KP yakhni cooking).\n"
+                    "4. SPICE: Add fennel powder + sounth. Add ½ cup water.\n"
+                    "5. TURNIPS: Add fried turnips. Cover and simmer 15 minutes on lowest flame. "
+                    "The white gravy should be fragrant, lightly thickened, and coat the turnips.\n\n"
+                    "SERVE: With plain rice. A classic KP winter meal."
+                ),
+                "links": [
+                    ("Wikipedia · Kashmiri Cuisine", "https://en.wikipedia.org/wiki/Kashmiri_cuisine"),
+                ],
+            },
+            {
+                "name": "Modur Pulav · मोदुर पुलाव (Sweet Rice)",
+                "icon": "",
+                "timing": "Navreh, Herath, weddings, Navreh Thali",
+                "desc": (
+                    "The festive sweet rice of Kashmiri Pandits — served at Navreh (New Year), "
+                    "weddings, and auspicious ceremonies. 'Modur' = sweet in Kashmiri.\n\n"
+                    "── INGREDIENTS (serves 6) ──\n"
+                    "· 2 cups basmati rice (washed, soaked 30 min)\n"
+                    "· ½ cup ghee (NOT oil — ghee is essential here)\n"
+                    "· 1 cup sugar or to taste\n"
+                    "· ½ cup mixed dry fruits: raisins, cashews, almonds, walnuts (broken)\n"
+                    "· 8–10 saffron strands soaked in 2 tbsp warm milk\n"
+                    "· 6 green cardamoms · 4 cloves · 1 cinnamon stick · 2 bay leaves\n"
+                    "· 4 cups water · ½ tsp salt\n\n"
+                    "── PROCESS ──\n"
+                    "1. FRY DRY FRUITS: In ghee, fry cashews until golden, then almonds, then raisins "
+                    "(raisins puff in 20 seconds). Remove all and set aside.\n"
+                    "2. WHOLE SPICES: In same ghee, add cardamoms, cloves, cinnamon, bay leaves — "
+                    "fry 30 seconds until aromatic.\n"
+                    "3. RICE: Add drained rice. Stir gently in the spiced ghee for 2 minutes "
+                    "until each grain is coated and slightly translucent.\n"
+                    "4. WATER + SUGAR: Add 4 cups water, sugar, salt, and saffron milk. "
+                    "Stir gently to dissolve sugar. Bring to boil.\n"
+                    "5. DUM: Reduce to lowest flame. Cover tightly (seal with dough if possible for true dum). "
+                    "Cook 20 minutes. Do NOT open lid during this time.\n"
+                    "6. FINISH: Open lid. Fluff gently with fork. Scatter fried dry fruits on top.\n\n"
+                    "SERVE: Warm, as a sweet dish alongside the main meal or as an offering. "
+                    "The saffron gives it a golden-orange colour and exquisite fragrance. "
+                    "On Navreh morning, the first sight of Modur Pulav in the Thali is auspicious."
+                ),
+                "links": [
+                    ("Wikipedia · Kashmiri Cuisine", "https://en.wikipedia.org/wiki/Kashmiri_cuisine"),
+                ],
+            },
+            {
+                "name": "Shufta · शुफ्ता (Dry Fruit Sweet)",
+                "icon": "",
+                "timing": "Navreh, Herath, weddings — sacred sweet",
+                "desc": (
+                    "Shufta is the most sacred KP sweet — offered at Navreh, Herath, and all auspicious ceremonies. "
+                    "A rich confection of dry fruits, cottage cheese and spices in sugar syrup.\n\n"
+                    "── INGREDIENTS ──\n"
+                    "· ½ cup each: walnuts (broken), cashews, almonds, raisins\n"
+                    "· ½ cup fresh paneer, crumbled\n"
+                    "· ½ cup coconut (desiccated or fresh grated)\n"
+                    "· 1 cup sugar · ½ cup water\n"
+                    "· 2 tbsp ghee\n"
+                    "· 6 saffron strands in 1 tbsp warm milk\n"
+                    "· ½ tsp cardamom powder · ¼ tsp dry ginger powder\n"
+                    "· 1 tsp rose water (optional)\n\n"
+                    "── PROCESS ──\n"
+                    "1. FRY DRY FRUITS: In ghee, lightly fry each dry fruit separately — "
+                    "almonds (2 min), cashews (2 min), walnuts (1 min), raisins (30 sec). Set aside.\n"
+                    "2. FRY PANEER: In same ghee, fry crumbled paneer until lightly golden. Set aside.\n"
+                    "3. SUGAR SYRUP: In a clean pan, dissolve sugar in ½ cup water. "
+                    "Cook to one-string consistency (syrup forms a single thread between fingers). "
+                    "Add saffron milk, cardamom, dry ginger, rose water.\n"
+                    "4. COMBINE: Add all fried dry fruits, paneer and coconut to the syrup. "
+                    "Stir quickly to coat everything. Remove from heat.\n"
+                    "5. SET: Pour onto a greased plate. Flatten lightly. "
+                    "It will set as it cools — not hard like barfi, but moist and jewel-like.\n\n"
+                    "SERVE: Cut into pieces or serve by spoonfuls. "
+                    "Central to the Navreh Thali — its presence is mandatory for auspiciousness."
+                ),
+                "links": [
+                    ("Wikipedia · Shufta", "https://en.wikipedia.org/wiki/Shufta"),
+                ],
+            },
+            {
+                "name": "Rajma · राजमा (Kashmiri Red Kidney Beans)",
+                "icon": "",
+                "timing": "Daily — a KP staple",
+                "desc": (
+                    "KP Rajma uses the small, dark Kashmiri rajma — much smaller and more flavourful "
+                    "than Punjabi rajma. Cooked without onion or garlic — the flavour comes entirely "
+                    "from the spice technique.\n\n"
+                    "── INGREDIENTS (serves 4) ──\n"
+                    "· 1 cup Kashmiri rajma (soaked overnight)\n"
+                    "· 3 tbsp mustard oil\n"
+                    "· ¼ tsp heeng · 2 whole dried red chillies\n"
+                    "· ½ tsp turmeric · 1 tsp Kashmiri chilli powder\n"
+                    "· 1 tsp fennel powder · ½ tsp sounth · Salt\n"
+                    "· 1 medium tomato (pureed) — optional in KP style\n\n"
+                    "── PROCESS ──\n"
+                    "1. PRESSURE COOK: Drain soaked rajma. Pressure cook with fresh water, "
+                    "salt and turmeric for 4–5 whistles until very soft. Reserve the cooking liquid.\n"
+                    "2. TEMPER: Heat mustard oil to smoking. Cool 10 sec. "
+                    "Add heeng — bloom. Add dry chillies — darken 20 sec.\n"
+                    "3. SPICES: Add Kashmiri chilli powder, fennel, sounth — stir 20 sec in warm oil. "
+                    "Add 2 tbsp water to form a paste.\n"
+                    "4. BEANS: Add cooked rajma along with its cooking liquid. Mash a few beans "
+                    "against the side of the pot to thicken the gravy.\n"
+                    "5. SIMMER: Cook uncovered 15–20 minutes on medium until gravy is thick and "
+                    "coats the beans. Adjust salt.\n\n"
+                    "SERVE: With plain boiled rice — the classic KP rice-rajma combination "
+                    "(known as 'Chawal-Rajma' or 'Bhaat te Rajma')."
+                ),
+                "links": [
+                    ("Wikipedia · Rajma", "https://en.wikipedia.org/wiki/Rajma"),
+                ],
+            },
+            {
+                "name": "Mujj Gaad · मुज गाड (Radish Preparation)",
+                "icon": "",
+                "timing": "Winter — white radish season",
+                "desc": (
+                    "A unique KP winter preparation — mujj = white radish (mooli) in Kashmiri. "
+                    "The radish is used in multiple forms: fresh (as chutney), cooked, and dried (wari).\n\n"
+                    "── MUJJ CHATIN (Radish Chutney) ──\n"
+                    "INGREDIENTS: 1 large white radish (grated), ½ tsp Kashmiri chilli powder, "
+                    "½ tsp sounth, salt, 1 tbsp mustard oil, fresh coriander.\n"
+                    "PROCESS: Mix grated radish with salt — let it sweat 10 min. Squeeze out liquid. "
+                    "Mix with chilli powder, sounth, mustard oil. Garnish with coriander. "
+                    "Served as a condiment — the heat of the radish is cooling in the KP system.\n\n"
+                    "── MUJJ WITH HAAKH ──\n"
+                    "Radish cut into chunks is added to Haakh in the last 10 minutes of cooking. "
+                    "The radish softens and absorbs the mustard oil–heeng base beautifully.\n\n"
+                    "── WARI (Dried Radish Dumpling) ──\n"
+                    "Traditional KP winter ingredient: white radish grated, mixed with rice flour and spices, "
+                    "shaped into flat rounds and sun-dried. Stored for winter months. "
+                    "Rehydrated and added to Haakh or cooked as a standalone dish in mustard oil."
+                ),
+                "links": [
+                    ("Wikipedia · Kashmiri Cuisine", "https://en.wikipedia.org/wiki/Kashmiri_cuisine"),
+                ],
+            },
+            {
+                "name": "Kehwa · केहवा (Kashmiri Green Tea)",
                 "icon": "",
                 "timing": "Daily — offered to every guest",
                 "desc": (
-                    "Kashmir's iconic green tea — brewed in a Samovar (brass urn) with "
-                    "saffron, cardamom, cinnamon, cloves and crushed almonds/walnuts. "
-                    "No milk. Served in small cups. Symbol of Kashmiri hospitality — "
-                    "refusing Kehwa is considered impolite. Drunk throughout the day."
+                    "Kashmir's iconic green tea — the symbol of Kashmiri hospitality.\n\n"
+                    "── INGREDIENTS (serves 2) ──\n"
+                    "· 2 cups water · 1 tsp Kehwa tea leaves (or ½ tsp green tea)\n"
+                    "· 4–5 saffron strands · 2 green cardamoms (crushed)\n"
+                    "· 1 small cinnamon stick · 2 cloves\n"
+                    "· 1 tsp sugar or honey · 6–8 blanched almond slivers\n\n"
+                    "── PROCESS ──\n"
+                    "1. Bring water to boil in a small copper Samovar or pot.\n"
+                    "2. Add cardamom, cinnamon, cloves — boil 2 minutes.\n"
+                    "3. Add tea leaves — simmer 1 minute (do not over-brew — stays green, not dark).\n"
+                    "4. Add saffron — it will turn the tea golden. Sweeten lightly.\n"
+                    "5. Strain into small cups. Top with almond slivers.\n\n"
+                    "NOTE: Traditionally brewed in a Samovar (Samavar) — a brass urn with "
+                    "a central chimney filled with hot charcoal. The charcoal-brewed version has "
+                    "a distinctive smoky note impossible to replicate on a gas stove.\n\n"
+                    "RITUAL: In KP homes, Kehwa is served immediately to any guest before anything else. "
+                    "Refusing it is considered impolite. Drunk throughout the day in winter."
                 ),
                 "links": [
                     ("Wikipedia · Kahwah", "https://en.wikipedia.org/wiki/Kahwah"),
                 ],
             },
             {
-                "name": "Noon Chai (Sheer Chai) · नून चाय",
+                "name": "Noon Chai · नून चाय (Pink Salted Tea)",
                 "icon": "",
                 "timing": "Morning — with bread",
                 "desc": (
-                    "Pink/magenta salted tea unique to Kashmir — made with special tea leaves, "
-                    "baking soda (makes it pink), milk and salt. Served with Kulcha, Lavasa "
-                    "(thin bread), or Tchot (ring bread). A breakfast staple in Kashmir. "
-                    "The colour comes from oxidation of the tea with baking soda."
+                    "The iconic pink tea of Kashmir — unique in the world for its colour and taste.\n\n"
+                    "── INGREDIENTS (serves 4) ──\n"
+                    "· 4 cups water · 2 tsp Noon Chai (Kashmiri pink tea) leaves\n"
+                    "· ½ tsp baking soda · 2 cups full-fat milk · Salt to taste\n"
+                    "· Crushed walnuts or pistachios (optional garnish)\n\n"
+                    "── PROCESS ──\n"
+                    "1. BREW: Bring 4 cups water to boil. Add tea leaves and baking soda. "
+                    "Boil vigorously 10–15 minutes — the water turns bright red/brown.\n"
+                    "2. CHURN: Pour the tea back and forth between two vessels (or use a whisk) "
+                    "to aerate — this develops the characteristic pinkish colour.\n"
+                    "3. MILK: Add milk to the red tea base. Bring back to boil. "
+                    "The mixture turns pink-magenta as the alkaline soda reacts with the tea.\n"
+                    "4. SALT: Add salt (generous — this is the 'noon/salt' in its name). Stir.\n"
+                    "5. STRAIN into cups. Garnish with crushed nuts.\n\n"
+                    "SERVE: With Girda (tandoor bread), Kulcha, Lavasa, or Bakarkhani. "
+                    "The saltiness and pink colour are acquired tastes — deeply loved by Kashmiris. "
+                    "No Kashmiri morning is complete without Noon Chai."
                 ),
                 "links": [
                     ("Wikipedia · Noon Chai", "https://en.wikipedia.org/wiki/Noon_chai"),
                 ],
             },
             {
-                "name": "Kashmiri Breads · रोटियाँ",
+                "name": "Kashmiri Breads · कश्मीरी रोटियाँ",
                 "icon": "",
-                "timing": "Daily",
+                "timing": "Daily — from traditional Kaan ovens",
                 "desc": (
-                    "Breadmaking is an art in Kashmir — baked in traditional clay ovens (kaan). "
-                    "Types: Kulcha (soft round bread), Lavasa (thin crispy flatbread), "
-                    "Tchot (ring-shaped sesame bread), Girda (round tandoor bread), "
-                    "Sheermal (sweet saffron bread for festivals), Bakarkhani (flaky layered bread)."
+                    "Kashmir has a rich bread culture — all baked in traditional Kaan (clay tandoor ovens). "
+                    "The baker (Nanbai / Kandur) is an important community figure in every KP mohalla.\n\n"
+                    "── TYPES AND PROCESS ──\n\n"
+                    "GIRDA (गिर्दा): Round, slightly thick tandoor bread. "
+                    "Dough: flour, water, yeast, salt, tiny amount oil. "
+                    "Proved 2 hours. Shaped into thick discs. Baked on Kaan walls 8–10 min. "
+                    "Eaten with Haakh, Rajma, Noon Chai.\n\n"
+                    "KULCHA (कुलचा): Soft, slightly sweet round bread with sesame seeds on top. "
+                    "Dough: flour, milk, sugar, salt, yeast, butter. Proved 2 hours. "
+                    "Topped with sesame seeds. Baked in Kaan. "
+                    "Classic breakfast bread — eaten with Noon Chai.\n\n"
+                    "LAVASA (लवासा): Ultra-thin crispy flatbread — paper thin. "
+                    "Dough stretched very thin, baked quickly on hot Kaan. Almost like a cracker. "
+                    "Broken and dunked in Noon Chai.\n\n"
+                    "TCHOT (चोट): Ring-shaped bread with sesame seeds — like a large sesame bagel. "
+                    "Dough similar to Kulcha but shaped into rings. Baked until golden. "
+                    "Strung on strings and sold hanging in traditional bakeries.\n\n"
+                    "SHEERMAL (शीरमाल): Festive saffron-milk bread. "
+                    "Dough enriched with saffron milk, sugar, and ghee. "
+                    "Baked soft and golden. Only made for weddings and festivals.\n\n"
+                    "BAKARKHANI (बाकरखानी): Flaky, layered, slightly crispy. "
+                    "Laminated dough (like rough puff pastry) with ghee folded in. "
+                    "Baked until golden-brown. Can be stored for days."
                 ),
                 "links": [
                     ("Wikipedia · Kashmiri Cuisine", "https://en.wikipedia.org/wiki/Kashmiri_cuisine"),
+                ],
+            },
+            {
+                "name": "Wazwan · वाज़वान (Grand KP Feast)",
+                "icon": "",
+                "timing": "Weddings and major celebrations",
+                "desc": (
+                    "The grand Kashmiri feast — a multi-course ritual meal at weddings and celebrations. "
+                    "Cooked by the Waza (master chef) on wood-fire in traditional large copper vessels. "
+                    "Served on a large copper plate (Traem) shared between 4 guests. "
+                    "The vegetarian dishes in the Wazwan sequence:\n\n"
+                    "1. MODUR PULAV — sweet saffron rice (first served, auspicious)\n"
+                    "2. HAAKH — collard greens (always present)\n"
+                    "3. CHAMAN — paneer in yogurt-fennel gravy\n"
+                    "4. NADRU YAKHNI — lotus stem in white gravy\n"
+                    "5. AL YAKHNI — turnip in yogurt gravy (winter)\n"
+                    "6. SHUFTA — the dessert-sweet served last\n\n"
+                    "The complete Wazwan also includes non-vegetarian courses (Rogan Josh, Yakhni, "
+                    "Gushtaba) but KP families also observe purely vegetarian Wazwan variants "
+                    "for ceremonies where sattvic rules apply."
+                ),
+                "links": [
+                    ("Wikipedia · Wazwan", "https://en.wikipedia.org/wiki/Wazwan"),
                 ],
             },
         ],
@@ -5234,6 +6278,71 @@ with tabs[6]:
                     ("Wikipedia · Kashmiri Embroidery", "https://en.wikipedia.org/wiki/Kashmiri_embroidery"),
                 ],
             },
+            {
+                "name": "Kangri · कांगड़ी (Fire Pot)",
+                "icon": "",
+                "timing": "Winter — Oct to Feb",
+                "desc": (
+                    "The Kangri is Kashmir's iconic personal fire pot — a clay pot holding glowing charcoal "
+                    "in a wicker basket. Carried under the Pheran close to the body for warmth. "
+                    "Each person has their own Kangri — it is a personal and intimate object. "
+                    "A well-decorated Kangri with silver or copper fittings is a prized possession and gift. "
+                    "Without Kangri and Pheran, a Kashmiri winter is unimaginable. "
+                    "The Kangri is also mentioned in KP ritual — the fire within symbolises the inner Agni."
+                ),
+                "links": [
+                    ("Wikipedia · Kangri", "https://en.wikipedia.org/wiki/Kangri_(firepot)"),
+                ],
+            },
+            {
+                "name": "Khatamband · खातमबंद (Wooden Ceiling Art)",
+                "icon": "",
+                "timing": "Traditional architecture",
+                "desc": (
+                    "Khatamband is the art of making geometric wooden ceilings — "
+                    "interlocking pieces of walnut or deodar wood fitted together without nails "
+                    "to create complex star and polygon patterns. Found in traditional KP homes, "
+                    "mosques, and shrines across Kashmir. The patterns are based on Islamic geometry "
+                    "but the technique and the craftsmen (Dagr) are shared across communities. "
+                    "The best examples are in old city Srinagar homes and the Shah Hamdan shrine. "
+                    "A Khatamband ceiling can have 6, 8, 12, or 16-pointed star patterns."
+                ),
+                "links": [
+                    ("Wikipedia · Khatamband", "https://en.wikipedia.org/wiki/Khatamband"),
+                ],
+            },
+            {
+                "name": "Namdah & Gabba · नमदाह / गब्बा",
+                "icon": "",
+                "timing": "Traditional craft",
+                "desc": (
+                    "Namdah: pressed felt rugs — wool fibres compressed (not woven) into thick felt and "
+                    "then embroidered with floral motifs in chain stitch. Lighter and less expensive than carpets. "
+                    "Gabba: recycled woollen fabric cut into strips and re-woven into colourful geometric rugs. "
+                    "Both are cottage industry crafts of rural Kashmir — produced in Anantnag and Budgam districts. "
+                    "Exported globally and part of the traditional KP home aesthetic."
+                ),
+                "links": [
+                    ("Wikipedia · Kashmiri Handicraft", "https://en.wikipedia.org/wiki/Kashmiri_handicraft"),
+                ],
+            },
+            {
+                "name": "Copper & Silverware (Kral craft) · ताँबा-चाँदी शिल्प",
+                "icon": "",
+                "timing": "Traditional craft — KP households",
+                "desc": (
+                    "Kashmir has a centuries-old tradition of copper and silverware — "
+                    "the craft of the Kral (potter-metalworker) community. "
+                    "Key items: Samovar (brass tea urn), Traem (large copper/brass plate for Wazwan), "
+                    "Saz (copper handwashing vessel), Tasht (basin), Manji (brass lamp). "
+                    "KP households traditionally had complete sets of these vessels for ritual and daily use. "
+                    "Silver items: ritual spoons (Karchul), betel nut containers, puja thalis. "
+                    "Many antique KP copper vessels are heirlooms brought from the Valley."
+                ),
+                "links": [
+                    ("Wikipedia · Kashmiri Handicraft", "https://en.wikipedia.org/wiki/Kashmiri_handicraft"),
+                ],
+            },
         ],
         "Language & Script · भाषा": [
             {
@@ -5280,6 +6389,72 @@ with tabs[6]:
                 ),
                 "links": [
                     ("Kashmiri Proverbs Archive", "https://archive.org/search?query=kashmiri+proverbs"),
+                ],
+            },
+            {
+                "name": "Kashmiri Numbers & Counting · कश्मीरी गिनती",
+                "icon": "",
+                "timing": "Living language",
+                "desc": (
+                    "The Kashmiri number system:\n"
+                    "1 = Akh · 2 = Zey · 3 = Trey · 4 = Tsur · 5 = Panch\n"
+                    "6 = She / Sheh · 7 = Sath · 8 = Ath · 9 = Nav · 10 = Dah\n"
+                    "11 = Kaah · 12 = Baah · 13 = Trueh · 14 = Choudah · 15 = Pandah\n"
+                    "20 = Wuh · 25 = Panchawuh · 30 = Trih · 50 = Panjah · 100 = Hath\n\n"
+                    "ORDINALS: First = Peeth · Second = Zan · Third = Trijem\n"
+                    "The numbers 11–14 are the same Kashmiri tithi names used in the panchang: "
+                    "Kaah (Ekadashi), Baah (Dwadashi), Trueh (Trayodashi), Choudah (Chaturdashi)."
+                ),
+                "links": [
+                    ("Wikipedia · Kashmiri Language", "https://en.wikipedia.org/wiki/Kashmiri_language"),
+                ],
+            },
+            {
+                "name": "KP Greeting Words & Daily Speech · अभिवादन",
+                "icon": "",
+                "timing": "Living speech",
+                "desc": (
+                    "Common KP Kashmiri words and greetings:\n\n"
+                    "GREETINGS:\n"
+                    "· Namaskar / Jai Mata Di — traditional KP greeting\n"
+                    "· Navreh Mubarak — New Year greeting (Navreh)\n"
+                    "· Herath Mubarak — Shivratri greeting\n\n"
+                    "FAMILY TERMS:\n"
+                    "· Bab — father · Maej — mother · Ded — grandmother · Bab ji — grandfather\n"
+                    "· Baeyi — brother · Bebeh — sister · Kan — maternal uncle\n\n"
+                    "FOOD TERMS:\n"
+                    "· Bhaat — rice · Haakh — greens · Noon — salt · Dood — milk\n"
+                    "· Tschay — tea · Tchanth — curd · Ghee — ghee\n\n"
+                    "SPIRITUAL TERMS:\n"
+                    "· Bhagwan — God · Pooja — worship · Bab Shiv — Shiva\n"
+                    "· Maej Sharika — Mother Sharika Devi · Mataji — Devi\n"
+                    "· Vakh — mystical verse (Lal Ded's poems) · Shrukh — poem of Nund Rishi"
+                ),
+                "links": [
+                    ("Wikipedia · Kashmiri Language", "https://en.wikipedia.org/wiki/Kashmiri_language"),
+                ],
+            },
+            {
+                "name": "Sharada Manuscripts & Libraries · शारदा पाण्डुलिपियाँ",
+                "icon": "",
+                "timing": "c. 8th century CE — ongoing preservation",
+                "desc": (
+                    "Kashmir was a great centre of manuscript production for over a millennium. "
+                    "Major collections of Kashmiri manuscripts (in Sharada and Devanagari):\n\n"
+                    "1. Srinagar Research Library (SRL) — formerly Oriental Research Institute: "
+                    "largest collection in Kashmir (~15,000 manuscripts).\n"
+                    "2. Bhandarkar Oriental Research Institute, Pune — significant Kashmir manuscripts.\n"
+                    "3. Asiatic Society of Bengal, Kolkata.\n"
+                    "4. National Archives of India, New Delhi.\n"
+                    "5. British Library, London — KSTS manuscripts.\n"
+                    "6. Bodleian Library, Oxford — Sir Aurel Stein collection.\n\n"
+                    "Subjects: Shaiva philosophy, Ayurveda, Jyotisha, literature, history.\n"
+                    "Digital access: INDIRA (government manuscript project), "
+                    "Muktabodha Indological Research Institute (muktabodha.org) — free online."
+                ),
+                "links": [
+                    ("Muktabodha Digital Library", "https://muktabodha.org"),
+                    ("Wikipedia · Kashmiri Manuscripts", "https://en.wikipedia.org/wiki/Sharada_script"),
                 ],
             },
         ],
@@ -5340,6 +6515,195 @@ with tabs[6]:
                 ),
                 "links": [
                     ("Wikipedia · Mughal Gardens Kashmir", "https://en.wikipedia.org/wiki/Mughal_gardens_of_Kashmir"),
+                ],
+            },
+            {
+                "name": "Wular Lake · वुलर झील",
+                "icon": "",
+                "timing": "Year-round",
+                "desc": (
+                    "Wular is the largest freshwater lake in India — ~189 sq km at peak. "
+                    "Located in Bandipora district, fed by the Jhelum (Vitasta) river. "
+                    "Mentioned in the Nilamata Purana as sacred. "
+                    "Rich in fish (mahseer, trout, carp) and water chestnuts (singhara). "
+                    "The surrounding areas of Sopore and Bandipora are historically significant KP settlements. "
+                    "Wular is connected to the Vitasta (Jhelum) — both sacred in KP tradition."
+                ),
+                "links": [
+                    ("Wikipedia · Wular Lake", "https://en.wikipedia.org/wiki/Wular_Lake"),
+                ],
+            },
+            {
+                "name": "Valley of Kashmir — Geography · कश्मीर घाटी",
+                "icon": "",
+                "timing": "Perennial",
+                "desc": (
+                    "The Kashmir Valley (Koshur Maej — Mother Kashmir) is a high-altitude mountain valley "
+                    "at ~1,600m (5,200 ft) elevation, ~135 km long and ~32 km wide. "
+                    "Bounded by: Pir Panjal range (south), Great Himalaya (north-east), Karakoram (far north). "
+                    "Drained by the Vitasta (Jhelum) river — the sacred mother-river of Kashmir (Rigvedic). "
+                    "According to Nilamata Purana: the valley was once a vast lake (Satisar) — "
+                    "drained by Vitasta at the request of the sage Kashyapa (from whom 'Kashmir' derives). "
+                    "This origin myth is geologically plausible — the valley shows lacustrine deposits. "
+                    "District count: 10 Kashmir Valley districts + 2 Ladakh + 10 Jammu = 22 districts total."
+                ),
+                "links": [
+                    ("Wikipedia · Kashmir Valley", "https://en.wikipedia.org/wiki/Kashmir_Valley"),
+                ],
+            },
+            {
+                "name": "Himalayan Flora · हिमालयी वनस्पति",
+                "icon": "",
+                "timing": "Spring–Summer — blooms",
+                "desc": (
+                    "Kashmir's flora is extraordinary — the valley is a botanical treasure:\n\n"
+                    "ICONIC BLOOMS:\n"
+                    "· Tulips — Indira Gandhi Tulip Garden (Asia's largest), Srinagar — April\n"
+                    "· Lotus (Kamal) — Dal and Wular lakes — sacred to Sharika Devi\n"
+                    "· Saffron (Crocus sativus) — Pampore fields — Oct–Nov\n"
+                    "· Almond (Badam) — Badamwari garden, Srinagar — Feb (first spring bloom)\n"
+                    "· Cherry (Kiur/Gulab) blossom — March–April\n"
+                    "· Narcissus (Nargis) — placed in Navreh Thali as auspicious\n\n"
+                    "SACRED TREES:\n"
+                    "· Chinar (Oriental Plane) — symbol of Kashmir\n"
+                    "· Walnut (Doon/Akhrot) — placed in Navreh Thali; wood used for Herath Shishur\n"
+                    "· Deodar Cedar — used in temples and traditional architecture\n"
+                    "· Apple orchards — Kashmir's modern economy (introduced 1917 by British)"
+                ),
+                "links": [
+                    ("Wikipedia · Flora of Kashmir", "https://en.wikipedia.org/wiki/Flora_of_Kashmir"),
+                ],
+            },
+            {
+                "name": "Sacred Mountains & Passes · पर्वत और दर्रे",
+                "icon": "",
+                "timing": "Pilgrimage seasons",
+                "desc": (
+                    "KEY SACRED MOUNTAINS:\n"
+                    "· Shankaracharya Hill (Takht-e-Sulaiman) — 1100m, Srinagar: Jyeshtheshwara Shiva temple; "
+                    "from where Vasugupta received the Shiva Sutras. Overlooking Dal Lake.\n"
+                    "· Hari Parbat — Srinagar: Sharika Devi (Chakreshwari) temple; the hill IS the goddess.\n"
+                    "· Amarnath (Sheshnag area) — 3,888m: the supreme Shiva Jyotirlinga of Kashmir; "
+                    "annual Amarnath Yatra (July–Aug) — the most significant KP pilgrimage.\n"
+                    "· Harmukh — 5,142m, Ganderbal: 'The throne of Shiva' — glacier lake Gangabal at its base.\n"
+                    "· Nanga Parbat — 8,125m: 'The Naked Mountain' — highest in the western Himalaya region.\n\n"
+                    "KEY PASSES:\n"
+                    "· Banihal Pass / Jawahar Tunnel — main road link between Kashmir and Jammu\n"
+                    "· Zoji La — 3,528m: links Kashmir Valley to Ladakh and Kargil\n"
+                    "· Banihal Pass — historic route used by all medieval Kashmiri traders and pilgrims"
+                ),
+                "links": [
+                    ("Wikipedia · Shankaracharya Hill", "https://en.wikipedia.org/wiki/Shankaracharya_Hill"),
+                    ("Wikipedia · Amarnath Temple", "https://en.wikipedia.org/wiki/Amarnath_temple"),
+                ],
+            },
+        ],
+        "KP Life Cycle Rituals · संस्कार": [
+            {
+                "name": "Namakarana · नामकरण (Naming Ceremony)",
+                "icon": "",
+                "timing": "11th day after birth",
+                "desc": (
+                    "The KP naming ceremony performed on the 11th day (some families: 12th) after birth. "
+                    "The Jyotishi (family astrologer) prepares the horoscope (Janam Patri) based on "
+                    "the exact birth time and place. The name is derived from the nakshatra pada of the Moon "
+                    "at birth — the first syllable of the name corresponds to the pada's akshar (syllable). "
+                    "The family priest recites the Namakarana mantras from the Grihyasutras. "
+                    "The child is placed in the father's lap. The name is whispered in the child's right ear three times. "
+                    "The public name may differ from the nakshatra-based name (which is the 'secret name' "
+                    "used in rituals). Accompanied by feasting and distribution of sweets."
+                ),
+                "links": [
+                    ("Wikipedia · Namakarana", "https://en.wikipedia.org/wiki/Namakarana"),
+                ],
+            },
+            {
+                "name": "Janeu (Yagnopavita) · यज्ञोपवीत (Sacred Thread)",
+                "icon": "",
+                "timing": "Boys aged 7–12 — auspicious muhurta",
+                "desc": (
+                    "The Yagnopavita (Janeu) ceremony marks the spiritual birth of a KP boy — "
+                    "'Dvija' (twice-born). From this day he is entitled to recite Vedic mantras. "
+                    "The ceremony includes: Mundan (head shaving), ritual bath, Havana (fire ceremony), "
+                    "donning the sacred three-strand thread (Janeu) over the left shoulder. "
+                    "The boy begins learning the Gayatri Mantra from his father or guru. "
+                    "In KP tradition, the Janeu ceremony is particularly elaborate — "
+                    "includes Kul Devi puja, family feast, and often coincides with the boy's "
+                    "first learning of the Shiva Panchakshara mantra (Na-Ma-Shi-Va-Ya)."
+                ),
+                "links": [
+                    ("Wikipedia · Yagnopavita", "https://en.wikipedia.org/wiki/Upanayana"),
+                ],
+            },
+            {
+                "name": "Vivah Samskara · विवाह (KP Marriage Rituals)",
+                "icon": "",
+                "timing": "Auspicious muhurtas — typically Nov–Feb",
+                "desc": (
+                    "KP marriage is a multi-day ceremony with distinct rituals:\n\n"
+                    "DAY 1 — DEVGUN: Both families perform Kul Devi puja. Horoscope matching (Guna Milana). "
+                    "Gotra check — same gotra marriage is absolutely forbidden.\n\n"
+                    "DAY 2 — LAGAN PATRIKA: The auspicious date and muhurta confirmed by Jyotishi.\n\n"
+                    "DAY 3 — WANWUN: Women of both families sing traditional KP wedding songs (Wanwun) "
+                    "for hours through the night — an ancient tradition preserved in the diaspora.\n\n"
+                    "DAY 4 — MEHENDI / DEVGUN: Henna application, final family prayers.\n\n"
+                    "WEDDING DAY — Main rituals: Saptapadi (seven steps around fire), "
+                    "Kanyadan (bride given by father), Mangalsutra, Sindoor. "
+                    "The fire ceremony (Havana) is conducted by a KP priest reciting Sanskrit mantras. "
+                    "The couple invokes Kul Devi and Kul Devta blessings.\n\n"
+                    "Wazwan feast follows — the complete 36-course meal for all guests."
+                ),
+                "links": [
+                    ("Wikipedia · Hindu Marriage", "https://en.wikipedia.org/wiki/Hindu_marriage_traditions_in_Karnataka"),
+                ],
+            },
+            {
+                "name": "Shraddha · श्राद्ध (Ancestor Rites)",
+                "icon": "",
+                "timing": "Pitru Paksha (Bhadrapada Krishna 1–30) + death anniversaries",
+                "desc": (
+                    "Shraddha is the ritual offering to deceased ancestors (Pitrus) — "
+                    "one of the most important ongoing duties of a KP family. "
+                    "Performed annually during Pitru Paksha (Bhadrapada Krishna fortnight) "
+                    "and on the death anniversary (tithi) of each ancestor.\n\n"
+                    "KP SHRADDHA PROCESS:\n"
+                    "1. SANKALPA: The male heir (eldest son) takes ritual resolution.\n"
+                    "2. TARPAN: Water offerings (with sesame seeds, kusha grass) to ancestors, "
+                    "gods, sages — poured three times each at a river or at home.\n"
+                    "3. PINDA DAAN: Rice balls (Pinda) offered on the ground — "
+                    "the physical form of nourishment for ancestors.\n"
+                    "4. BRAHMIN BHOJ: A Brahmin (representing the ancestor) is fed "
+                    "a full sattvic meal with all 16 traditional items.\n"
+                    "5. DAAN: Gifts of cloth, food, money given to the priest.\n\n"
+                    "SPECIAL KP SHRADDHA: Mahalaya Amavasya (Bhadrapada Krishna 30) — "
+                    "the most important Pitru Amavasya, performed at the Vitasta (Jhelum) river ghats."
+                ),
+                "links": [
+                    ("Wikipedia · Shraddha", "https://en.wikipedia.org/wiki/Shraddha"),
+                ],
+            },
+            {
+                "name": "Puja Vidhi (Daily Worship) · नित्यकर्म पूजा",
+                "icon": "",
+                "timing": "Daily — morning",
+                "desc": (
+                    "The KP Nityakarma (daily ritual) follows the Shaiva Agamic tradition:\n\n"
+                    "1. SHUDDHI: Ritual purification — bath, clean clothes.\n"
+                    "2. SANDHYAVANDANA: Prayers at the three sandhyas (dawn, noon, dusk). "
+                    "The dawn Sandhya includes: Achamana, Marjana, Arghya to Sun, Gayatri Japa (108 times).\n"
+                    "3. PUJA: Puja of the family deity — Shivalinga or Shalagrama. "
+                    "Offerings: flowers (pushpa), incense (dhupa), lamp (dipa), water (jala), "
+                    "food (naivedya), betel (tambula). "
+                    "Recitation: Shiva Panchakshara stotra, Rudrashtakam, family mantras.\n"
+                    "4. KUL DEVI PUJA: Brief invocation of the Kul Devi (Sharika, Ragnya, etc.) "
+                    "with flowers and incense.\n"
+                    "5. SHARADA STUTI: Many KP families recite the Sharada Stotram "
+                    "('Ya Sharada nilotpala-dala-shyama') as a daily invocation.\n\n"
+                    "The complete KP puja manual is based on the Paddhati texts of the tradition — "
+                    "simplified forms are used today but the structure follows the Agamic prescription."
+                ),
+                "links": [
+                    ("Wikipedia · Hindu Puja", "https://en.wikipedia.org/wiki/Puja_(Hinduism)"),
                 ],
             },
         ],
