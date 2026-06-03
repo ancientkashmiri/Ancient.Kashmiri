@@ -579,7 +579,6 @@ def is_auspicious(jd: float, sun_lon: float = None, moon_lon: float = None) -> T
 # FULL PANCHANG
 # ---------------------------------------------------------------------------
 
-@lru_cache(maxsize=256)
 def get_full_panchang(target_date: date, lat: float, lon: float) -> Dict:
     """Complete panchang for a date at given coordinates."""
     dt_noon  = datetime(target_date.year, target_date.month, target_date.day, 12, 0, 0)
@@ -628,9 +627,15 @@ def get_full_panchang(target_date: date, lat: float, lon: float) -> Dict:
     except Exception:
         adhik = False
 
+    # Planet positions at current UTC moment — matches Drik Panchang live display.
+    # Panchang elements (tithi, nakshatra, yoga, karana, masa) use sunrise JD per
+    # Vedic tradition. Graha Sthiti uses now_jd so degrees match live references.
+    now_dt  = datetime.utcnow()
+    now_jd  = swe.julday(now_dt.year, now_dt.month, now_dt.day,
+                         now_dt.hour + now_dt.minute/60.0 + now_dt.second/3600.0)
     planets = {}
     for name, planet_id in PLANETS.items():
-        p_lon = get_planet_lon(jd, planet_id)
+        p_lon = get_planet_lon(now_jd, planet_id)
         p_rashi, p_deg_in_rashi = lon_to_rashi(p_lon)
         p_nak, p_pada, p_nak_deg = lon_to_nakshatra(p_lon)
         rashi_idx = RASHI_NAMES.index(p_rashi)
