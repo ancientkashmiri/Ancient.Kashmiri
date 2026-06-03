@@ -126,120 +126,241 @@ KP_DISTRICTS = [
 ]
 
 KP_TOWNS = {
-    "Srinagar":  [
+    # ── SRINAGAR ──────────────────────────────────────────────────────────────
+    "Srinagar": [
+        # Old City — historic KP mohallas
         "Habba Kadal", "Rainawari", "Zaina Kadal", "Fateh Kadal",
         "Safa Kadal", "Bohri Kadal", "Aali Kadal", "Nawab Bazar",
         "Shehr-e-Khas", "Khanyar", "Nowhatta", "Maisuma",
-        "Barbarshah", "Safakadal", "Karan Nagar", "Gogji Pathri",
+        "Barbarshah", "Karan Nagar", "Gogji Pathri",
+        # New City / Extensions
         "Bemina", "Hyderpora", "Natipora", "Jawahar Nagar",
         "Indira Nagar", "Rajbagh", "Lal Chowk", "Soura",
-        "Nishat", "Harwan", "Shalimar", "Ganderbal Town",
+        "Nishat", "Harwan", "Shalimar", "Brein",
+        # Outskirts / Rural
         "Pampore", "Lasjan", "Narbal", "Pantha Chowk",
+        "Nowgam", "Humhama", "Rangreth", "Buchpora",
     ],
+    # ── BARAMULLA ─────────────────────────────────────────────────────────────
     "Baramulla": [
         "Baramulla Town", "Sopore", "Pattan", "Uri",
         "Tangmarg", "Gulmarg", "Rafiabad", "Kreeri",
-        "Kunzer", "Boniyar", "Druggmulla", "Kawanpora",
+        "Kunzer", "Boniyar", "Drugmulla", "Kawanpora",
+        "Watergam", "Rohama", "Dangiwacha", "Wagoora",
+        "Singhpora", "Chandil Pora", "Nadihal", "Hathlangoo",
     ],
-    "Anantnag":  [
-        "Anantnag Town", "Bijbehara", "Islamabad", "Kokernag",
-        "Pahalgam", "Dooru", "Shangus", "Vailoo",
-        "Srigufwara", "Mattan", "Achabal", "Verinag",
-        "Breng Valley", "Qazigund", "Banihal",
+    # ── ANANTNAG ──────────────────────────────────────────────────────────────
+    "Anantnag": [
+        "Anantnag Town", "Bijbehara", "Kokernag", "Pahalgam",
+        "Dooru", "Shangus", "Vailoo", "Srigufwara",
+        "Mattan", "Achabal", "Verinag", "Breng Valley",
+        "Qazigund", "Banihal", "Dachnipora", "Larnoo",
+        "Sagam", "Wanpoh", "Arwani", "Daksum",
+        "Khanbal", "Wuyan", "Kulgam Road", "Zainagir",
     ],
-    "Pulwama":   [
+    # ── PULWAMA ───────────────────────────────────────────────────────────────
+    "Pulwama": [
         "Pulwama Town", "Pampore", "Tral", "Awantipora",
         "Khrew", "Kakapora", "Rajpora", "Newa",
-        "Arihal", "Shadimarg",
+        "Arihal", "Shadimarg", "Lassipora", "Drabgam",
+        "Samboora", "Namblabal", "Mir Mohalla", "Nowpora",
     ],
-    "Budgam":    [
+    # ── BUDGAM ────────────────────────────────────────────────────────────────
+    "Budgam": [
         "Budgam Town", "Magam", "Beerwah", "Narbal",
         "Chadoora", "Khansahib", "Charar-i-Sharief",
         "Rakh-i-Arth", "Soibugh", "Pakharpora",
+        "Manzam", "Nagam", "Ichgam", "Wathoora",
+        "Khag", "Yousmarg", "Dobiwan", "Warpora",
     ],
-    "Kupwara":   [
+    # ── KUPWARA ───────────────────────────────────────────────────────────────
+    "Kupwara": [
         "Kupwara Town", "Handwara", "Karnah", "Lolab",
         "Sogam", "Kralpora", "Drugmulla", "Trehgam",
+        "Langate", "Vilgam", "Keran", "Teetwal",
+        "Shardi", "Machil", "Tikker", "Ramhal",
     ],
+    # ── GANDERBAL ─────────────────────────────────────────────────────────────
     "Ganderbal": [
         "Ganderbal Town", "Kangan", "Lar", "Wakura",
         "Manigam", "Tullamulla", "Shuhama",
+        "Gund", "Sonamarg", "Wangath", "Naranag",
+        "Safapora", "Nunar", "Gund Brath",
     ],
-    "Shopian":   [
+    # ── SHOPIAN ───────────────────────────────────────────────────────────────
+    "Shopian": [
         "Shopian Town", "Keegam", "Hermain", "Zainpora",
         "Hirpora", "Barbugh", "Chitragam",
+        "Pinjoora", "Keller", "Wachi", "Imam Sahib",
     ],
-    "Kulgam":    [
+    # ── KULGAM ────────────────────────────────────────────────────────────────
+    "Kulgam": [
         "Kulgam Town", "D.H. Pora", "Devsar", "Frisal",
         "Pahloo", "Yaripora", "Noorabad",
+        "Quimoh", "Manzgam", "Redwani", "Qazigund",
     ],
+    # ── BANDIPORA ─────────────────────────────────────────────────────────────
     "Bandipora": [
         "Bandipora Town", "Hajin", "Sumbal", "Gurez",
         "Ajas", "Tulail", "Sonawari",
+        "Palhalan", "Kaloosa", "Asham", "Chandusa",
+        "Arin", "Bandh Pether",
     ],
 }
 
 KP_VILLAGES = {
-    # Srinagar
-    "Habba Kadal":    ["Habba Kadal (mohalla)", "Kawdara", "Safakadal", "Maharajgunj"],
-    "Rainawari":      ["Rainawari", "Dalgate", "Nallabagh", "Sheikh Mohalla"],
-    "Zaina Kadal":    ["Zaina Kadal", "Saraf Kadal", "Kathi Darwaza", "Kralpather"],
-    "Fateh Kadal":    ["Fateh Kadal", "Baba Demb", "Maharaj Gunj", "Naidyar"],
-    "Safa Kadal":     ["Safa Kadal", "Zukura", "Drujan", "Idgah"],
-    "Bohri Kadal":    ["Bohri Kadal", "Chattabal", "Azad Gunj", "Badami Bagh"],
-    "Aali Kadal":     ["Aali Kadal", "Sekidafar", "Guru Bazar", "Khankahi Mohalla"],
-    "Nawab Bazar":    ["Nawab Bazar", "Kathi Darwaza", "Sopore Gate", "Noorbagh"],
-    "Shehr-e-Khas":   ["Shehr-e-Khas", "Lal Chowk Area", "Residency Road", "Polo View"],
-    "Khanyar":        ["Khanyar", "Bagh-e-Dilawar Khan", "Syed Ali Akbar Mohalla"],
-    "Nowhatta":       ["Nowhatta", "Budshah Chowk", "Noor Bagh", "Gaw Kadal"],
-    "Karan Nagar":    ["Karan Nagar", "Gogji Pathri", "Wazir Bagh", "Buchpora"],
-    "Gogji Pathri":   ["Gogji Pathri", "Natipora", "Hyderpora", "Bemina"],
-    "Soura":          ["Soura", "Baghi Mehtab", "Pantha Chowk", "Nowgam"],
-    "Nishat":         ["Nishat", "Cheshmashahi", "Harwan", "Shalimar"],
-    "Pampore":        ["Pampore", "Lethpora", "Awantipora", "Pulwama Road"],
-    "Narbal":         ["Narbal", "Lasjan", "Rangreth", "Humhama"],
-    # Baramulla
-    "Baramulla Town": ["Baramulla Town", "Khawajabagh", "Watergam", "Sopore Road"],
-    "Sopore":         ["Sopore", "Dangiwacha", "Kralagund", "Arampora"],
-    "Pattan":         ["Pattan", "Watlab", "Singhpora", "Nadihal"],
-    "Tangmarg":       ["Tangmarg", "Drang", "Kunzer", "Wagoora"],
-    "Gulmarg":        ["Gulmarg", "Affarwat", "Khilanmarg", "Kongdoori"],
-    "Uri":            ["Uri", "Boniyar", "Salamabad", "Churanda"],
-    # Anantnag
-    "Anantnag Town":  ["Anantnag Town", "Khanbal", "Shahabad", "Lal Chowk Anantnag"],
-    "Bijbehara":      ["Bijbehara", "Wanpoh", "Achabal", "Arwani"],
-    "Kokernag":       ["Kokernag", "Daksum", "Verinag", "Pahalgam Road"],
-    "Pahalgam":       ["Pahalgam", "Aru", "Betaab Valley", "Chandanwari"],
-    "Mattan":         ["Mattan", "Martand", "Tral Road", "Sagam"],
-    "Achabal":        ["Achabal", "Bijbehara Road", "Watchiloo", "Semthan"],
-    # Pulwama
-    "Pulwama Town":   ["Pulwama Town", "Tral", "Rajpora", "Shadimarg"],
-    "Awantipora":     ["Awantipora", "Pampore", "Kakapora", "Lassipora"],
-    "Khrew":          ["Khrew", "Drabgam", "Newa", "Arihal"],
-    "Kakapora":       ["Kakapora", "Mir Mohalla", "Namblabal", "Samboora"],
-    # Budgam
-    "Budgam Town":    ["Budgam Town", "Chadoora", "Nagam", "Ichgam"],
-    "Magam":          ["Magam", "Warpora", "Charar-i-Sharief Road", "Rakh"],
-    "Beerwah":        ["Beerwah", "Sultanpora", "Khag", "Wathoora"],
-    "Charar-i-Sharief": ["Charar-i-Sharief", "Dobiwan", "Durganag", "Yousmarg"],
-    # Kupwara
-    "Kupwara Town":   ["Kupwara Town", "Drugmulla", "Vilgam", "Kralpora"],
-    "Handwara":       ["Handwara", "Langate", "Khumriyal", "Sogam"],
-    "Karnah":         ["Karnah", "Teetwal", "Shardi", "Keran"],
-    # Ganderbal
-    "Ganderbal Town": ["Ganderbal Town", "Wakura", "Tullamulla (Tulmul)", "Shuhama"],
-    "Kangan":         ["Kangan", "Gund", "Sonamarg", "Lar"],
-    "Tullamulla":     ["Tullamulla (Tulmul)", "Wakura", "Manigam", "Shuhama"],
-    # Shopian
-    "Shopian Town":   ["Shopian Town", "Zainpora", "Keegam", "Hermain"],
-    "Keegam":         ["Keegam", "Pinjoora", "Chitragam", "Barbugh"],
-    # Kulgam
-    "Kulgam Town":    ["Kulgam Town", "Devsar", "D.H. Pora", "Noorabad"],
-    "D.H. Pora":      ["D.H. Pora", "Yaripora", "Frisal", "Pahloo"],
-    # Bandipora
-    "Bandipora Town": ["Bandipora Town", "Hajin", "Sumbal", "Sonawari"],
-    "Hajin":          ["Hajin", "Ajas", "Palhalan", "Kaloosa"],
-    "Sumbal":         ["Sumbal", "Asham", "Sopore Road", "Pattan Road"],
+    # ── SRINAGAR — Old City ───────────────────────────────────────────────────
+    "Habba Kadal":    ["Habba Kadal (mohalla)", "Kawdara", "Safakadal", "Maharajgunj", "Kral Bazar"],
+    "Rainawari":      ["Rainawari", "Dalgate", "Nallabagh", "Sheikh Mohalla", "Nagin"],
+    "Zaina Kadal":    ["Zaina Kadal", "Saraf Kadal", "Kathi Darwaza", "Kralpather", "Fateh Kadal North"],
+    "Fateh Kadal":    ["Fateh Kadal", "Baba Demb", "Maharaj Gunj", "Naidyar", "Rozabal"],
+    "Safa Kadal":     ["Safa Kadal", "Zukura", "Drujan", "Idgah", "Nowpora"],
+    "Bohri Kadal":    ["Bohri Kadal", "Chattabal", "Azad Gunj", "Badami Bagh", "Khrew Alichi"],
+    "Aali Kadal":     ["Aali Kadal", "Sekidafar", "Guru Bazar", "Khankahi Mohalla", "Makhama"],
+    "Nawab Bazar":    ["Nawab Bazar", "Kathi Darwaza", "Sopore Gate", "Noorbagh", "Fateh Kadal South"],
+    "Shehr-e-Khas":   ["Shehr-e-Khas", "Lal Chowk Area", "Residency Road", "Polo View", "Maulana Azad Road"],
+    "Khanyar":        ["Khanyar", "Bagh-e-Dilawar Khan", "Syed Ali Akbar Mohalla", "Abi Guzar"],
+    "Nowhatta":       ["Nowhatta", "Budshah Chowk", "Noor Bagh", "Gaw Kadal", "Barbarshah"],
+    "Karan Nagar":    ["Karan Nagar", "Gogji Pathri", "Wazir Bagh", "Buchpora", "Hyderpora North"],
+    "Gogji Pathri":   ["Gogji Pathri", "Natipora", "Hyderpora", "Bemina", "Lawaypora"],
+    "Soura":          ["Soura", "Baghi Mehtab", "Pantha Chowk", "Nowgam", "Barzulla"],
+    "Nishat":         ["Nishat", "Cheshmashahi", "Harwan", "Shalimar", "Naseem Bagh"],
+    "Brein":          ["Brein", "Dara", "Manasbal Road", "Hazratbal"],
+    # ── SRINAGAR — Outskirts ─────────────────────────────────────────────────
+    "Pampore":        ["Pampore", "Lethpora", "Narkara", "Mir Bahri"],
+    "Lasjan":         ["Lasjan", "Rangreth", "Humhama", "Ichgam North"],
+    "Narbal":         ["Narbal", "Kanihama", "Sempora", "Khrew (Budgam side)"],
+    "Nowgam":         ["Nowgam", "Barzulla", "Tengpora", "Batamaloo"],
+    "Buchpora":       ["Buchpora", "Rambagh", "Nawa Bazar", "Abi Guzar"],
+    # ── BARAMULLA ────────────────────────────────────────────────────────────
+    "Baramulla Town": ["Baramulla Town", "Khawajabagh", "Watergam", "Sopore Road", "Azad Gunj Baramulla"],
+    "Sopore":         ["Sopore", "Dangiwacha", "Kralagund", "Arampora", "Sherabad"],
+    "Pattan":         ["Pattan", "Watlab", "Singhpora", "Nadihal", "Chandil Pora"],
+    "Tangmarg":       ["Tangmarg", "Drang", "Kunzer", "Wagoora", "Bagh-e-Sumbul"],
+    "Gulmarg":        ["Gulmarg", "Affarwat", "Khilanmarg", "Kongdoori", "Ferozpur Nallah"],
+    "Uri":            ["Uri", "Boniyar", "Salamabad", "Churanda", "Hathlangoo"],
+    "Kreeri":         ["Kreeri", "Rohama", "Hathlangoo", "Wussan"],
+    "Kawanpora":      ["Kawanpora", "Dangerpora", "Palhallan", "Magraypora"],
+    # ── ANANTNAG ─────────────────────────────────────────────────────────────
+    "Anantnag Town":  ["Anantnag Town", "Khanbal", "Shahabad", "Lal Chowk Anantnag", "Safa Kadal Anantnag"],
+    "Bijbehara":      ["Bijbehara", "Wanpoh", "Arwani", "Naina", "Dialgam"],
+    "Kokernag":       ["Kokernag", "Daksum", "Verinag", "Brariangan", "Pahalgam Road"],
+    "Pahalgam":       ["Pahalgam", "Aru", "Betaab Valley", "Chandanwari", "Baisaran"],
+    "Mattan":         ["Mattan", "Martand", "Sagam", "Wanpora", "Bunagam"],
+    "Achabal":        ["Achabal", "Watchiloo", "Semthan", "Yaripora (Anantnag)", "Kragsoo"],
+    "Dooru":          ["Dooru", "Kokernag Road", "Naina", "Srigufwara"],
+    "Shangus":        ["Shangus", "Dachnipora", "Larnoo", "Pahalgam Bypass"],
+    "Breng Valley":   ["Breng Valley", "Wandhama", "Nowpora Anantnag", "Zainagir"],
+    "Qazigund":       ["Qazigund", "Banihal", "Jawahar Tunnel", "Sangaldan"],
+    "Verinag":        ["Verinag", "Kokernag South", "Khul", "Wuyan"],
+    # ── PULWAMA ──────────────────────────────────────────────────────────────
+    "Pulwama Town":   ["Pulwama Town", "Tral Road", "Rajpora", "Shadimarg", "Awantipora Road"],
+    "Awantipora":     ["Awantipora", "Kakapora", "Lassipora", "Mir Bahri", "Pampore South"],
+    "Khrew":          ["Khrew", "Drabgam", "Newa", "Arihal", "Sethpora"],
+    "Kakapora":       ["Kakapora", "Mir Mohalla", "Namblabal", "Samboora", "Litter"],
+    "Tral":           ["Tral", "Noorpora", "Khanpur Tral", "Rajpora Tral"],
+    "Shadimarg":      ["Shadimarg", "Tahab", "Sirnoo", "Prichoo"],
+    # ── BUDGAM ───────────────────────────────────────────────────────────────
+    "Budgam Town":    ["Budgam Town", "Chadoora", "Nagam", "Ichgam", "Soiteng"],
+    "Magam":          ["Magam", "Warpora", "Rakh-i-Arth", "Wathoora South"],
+    "Beerwah":        ["Beerwah", "Sultanpora", "Khag", "Wathoora", "Panzgam"],
+    "Charar-i-Sharief": ["Charar-i-Sharief", "Dobiwan", "Durganag", "Yousmarg", "Charsoo"],
+    "Manzam":         ["Manzam", "Soibugh", "Pakharpora", "Narkara Budgam"],
+    "Narbal":         ["Narbal", "Kanihama", "Sempora", "Palhalan Budgam"],
+    "Chadoora":       ["Chadoora", "Ompora", "Batpora", "Bellow"],
+    "Khansahib":      ["Khansahib", "Rathsun", "Wuder", "Nilora"],
+    # ── KUPWARA ──────────────────────────────────────────────────────────────
+    "Kupwara Town":   ["Kupwara Town", "Drugmulla", "Vilgam", "Kralpora", "Machil Road"],
+    "Handwara":       ["Handwara", "Langate", "Khumriyal", "Sogam", "Tikker"],
+    "Karnah":         ["Karnah", "Teetwal", "Shardi", "Keran", "Tangdhar"],
+    "Lolab":          ["Lolab", "Sogam", "Kralangam", "Maidanpora"],
+    "Trehgam":        ["Trehgam", "Ramhal", "Panzgam Kupwara", "Palwama Kupwara"],
+    "Drugmulla":      ["Drugmulla", "Kalmoona", "Zaloora", "Woosa"],
+    # ── GANDERBAL ────────────────────────────────────────────────────────────
+    "Ganderbal Town": ["Ganderbal Town", "Wakura", "Tullamulla (Tulmul)", "Shuhama", "Nunar"],
+    "Kangan":         ["Kangan", "Gund", "Sonamarg", "Lar", "Naranag"],
+    "Tullamulla":     ["Tullamulla (Tulmul)", "Wakura", "Manigam", "Shuhama", "Safapora"],
+    "Wangath":        ["Wangath", "Naranag", "Kangan Upper", "Gund Brath"],
+    "Manigam":        ["Manigam", "Lar", "Nundkol", "Shuhama South"],
+    # ── SHOPIAN ──────────────────────────────────────────────────────────────
+    "Shopian Town":   ["Shopian Town", "Zainpora", "Keegam", "Hermain", "Keller"],
+    "Keegam":         ["Keegam", "Pinjoora", "Chitragam", "Barbugh", "Wachi"],
+    "Zainpora":       ["Zainpora", "Imam Sahib", "Keller South", "Hirpora"],
+    "Hermain":        ["Hermain", "Barbugh", "Rangpora", "Bonpora"],
+    # ── KULGAM ───────────────────────────────────────────────────────────────
+    "Kulgam Town":    ["Kulgam Town", "Devsar", "D.H. Pora", "Noorabad", "Manzgam"],
+    "D.H. Pora":      ["D.H. Pora", "Yaripora", "Frisal", "Pahloo", "Redwani"],
+    "Devsar":         ["Devsar", "Frisal", "Quimoh", "Wanpora Kulgam"],
+    "Noorabad":       ["Noorabad", "Manzgam", "Chowgam", "Vailoo Kulgam"],
+    "Yaripora":       ["Yaripora", "Pahloo", "Wandhama Kulgam", "Qaimoh"],
+    # ── BANDIPORA ────────────────────────────────────────────────────────────
+    "Bandipora Town": ["Bandipora Town", "Hajin", "Sumbal", "Sonawari", "Chandusa"],
+    "Hajin":          ["Hajin", "Ajas", "Palhalan", "Kaloosa", "Arin"],
+    "Sumbal":         ["Sumbal", "Asham", "Bandh Pether", "Watlab Bandipora"],
+    "Gurez":          ["Gurez", "Dawar", "Tulail", "Achabal Gurez"],
+    "Sonawari":       ["Sonawari", "Chandusa", "Palhalan South", "Wadipora"],
+}
+
+# ---------------------------------------------------------------------------
+# KUL DEVI / DEVTA OVERRIDE BY TOWN
+# For towns where the kul devi/devta differs from the district default,
+# this provides a more precise mapping.
+# ---------------------------------------------------------------------------
+
+KUL_DEVI_BY_TOWN = {
+    # Srinagar old-city mohallas — all Sharika Devi
+    "Habba Kadal": "Sharika Devi (Chakreshwari)",
+    "Rainawari":   "Sharika Devi (Chakreshwari)",
+    "Zaina Kadal": "Sharika Devi (Chakreshwari)",
+    "Fateh Kadal": "Sharika Devi (Chakreshwari)",
+    "Safa Kadal":  "Sharika Devi (Chakreshwari)",
+    "Bohri Kadal": "Sharika Devi (Chakreshwari)",
+    "Aali Kadal":  "Sharika Devi (Chakreshwari)",
+    "Nawab Bazar": "Sharika Devi (Chakreshwari)",
+    "Shehr-e-Khas":"Sharika Devi (Chakreshwari)",
+    "Khanyar":     "Sharika Devi (Chakreshwari)",
+    "Nowhatta":    "Sharika Devi (Chakreshwari)",
+    "Maisuma":     "Sharika Devi (Chakreshwari)",
+    "Barbarshah":  "Sharika Devi (Chakreshwari)",
+    "Karan Nagar": "Sharika Devi (Chakreshwari)",
+    # Ganderbal — Ragnya Devi (Kheer Bhawani) — temple here
+    "Tullamulla":      "Ragnya Devi (Kheer Bhawani) — temple at Tulmul",
+    "Ganderbal Town":  "Ragnya Devi (Kheer Bhawani)",
+    "Wakura":          "Ragnya Devi (Kheer Bhawani)",
+    "Wangath":         "Bhadrakali — Wangath temple (mountain shrine)",
+    # Budgam — Manzam has secondary Ragnya Devi spring
+    "Manzam":          "Ragnya Devi — Manzam spring (secondary shrine)",
+    "Charar-i-Sharief":"Sharika Devi (originally Shaiva site)",
+    # Pulwama — Khrew is Jwala Devi seat
+    "Khrew":       "Jwala Devi (Jwala Bhagwati) — primary temple at Khrew",
+    "Awantipora":  "Jwala Devi / Sharika Devi",
+    "Pampore":     "Sharika Devi / Jwala Devi",
+    # Anantnag — Mattan is Bhadrakali / Martand area
+    "Mattan":      "Bhadrakali — near Martand Sun Temple",
+    "Achabal":     "Bhadrakali",
+    "Pahalgam":    "Bhadrakali / Ragnya Devi",
+    "Kokernag":    "Bhadrakali",
+    "Verinag":     "Ragnya Devi — Verinag spring (associated shrine)",
+    # Kulgam — Devsar is Tripura Sundari seat
+    "Devsar":      "Tripura Sundari (Tripureshwari)",
+    "D.H. Pora":   "Tripura Sundari / Bhadrakali",
+    "Kulgam Town": "Bhadrakali / Tripura Sundari",
+    "Noorabad":    "Tripura Sundari",
+    "Yaripora":    "Tripura Sundari",
+    # Shopian — Bhadrakali / Jwala Devi
+    "Shopian Town": "Bhadrakali",
+    "Keegam":       "Bhadrakali / Jwala Devi",
+    "Zainpora":     "Bhadrakali",
+    # Kupwara — Sharada Devi (proxy shrines at Handwara / Trehgam)
+    "Handwara":    "Sharada Devi — proxy shrine at Handwara (original: Sharada Peeth, PoK)",
+    "Trehgam":     "Sharada Devi — Trehgam proxy shrine",
+    "Karnah":      "Sharada Devi",
+    # Bandipora — Ragnya Devi + Nandkeshwar (Sumbal)
+    "Sumbal":      "Ragnya Devi (Kheer Bhawani) / Nandkeshwar Bhairava temple",
+    "Hajin":       "Ragnya Devi (Kheer Bhawani)",
+    "Bandipora Town": "Ragnya Devi (Kheer Bhawani)",
+    "Sonawari":    "Ragnya Devi (Kheer Bhawani)",
+    "Gurez":       "Sharika Devi / Ragnya Devi",
 }
 
 # Comprehensive list of Kashmiri Pandit surnames
